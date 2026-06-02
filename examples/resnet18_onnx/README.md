@@ -187,3 +187,18 @@ python examples/resnet18_onnx/export_onnx.py
 | Date | Image | CPU / Machine | PyTorch inference-only latency(ms) | ONNX Runtime inference-only latency(ms) | PyTorch end-to-end latency(ms) | ONNX Runtime end-to-end latency(ms) | Notes |
 | --- | --- | --- | ---: | ---: | ---: | ---: | --- |
 | | | | | | | | |
+
+### 실제 이미지 benchmark 결과
+
+`benchmark_image.py`는 실제 이미지 입력에서 다음 두 가지 latency를 측정합니다.
+
+- **inference-only latency**: 이미지를 한 번 로드하고 전처리한 tensor를 사용해 모델 추론만 반복 측정합니다.
+- **end-to-end latency**: 매 반복마다 이미지 로딩, 전처리, 추론, softmax/top-5 후처리까지 포함해 측정합니다.
+
+| Image | PyTorch Inference-only (ms) | ONNX Runtime Inference-only (ms) | PyTorch End-to-end (ms) | ONNX Runtime End-to-end (ms) |
+|---|---:|---:|---:|---:|
+| test_mouse.jpg | 34.448 | 18.910 | 179.548 | 168.888 |
+| test_keyboard.jpg | 34.670 | 18.901 | 173.740 | 163.414 |
+| test_headphone.jpg | 34.196 | 17.089 | 172.030 | 164.644 |
+
+ONNX Runtime은 inference-only 기준으로 PyTorch보다 약 1.8~2.0배 빠르게 측정되었습니다. 반면 end-to-end 기준에서는 이미지 로딩 및 전처리 시간이 전체 시간에서 큰 비중을 차지해 개선 폭이 작아졌습니다. 따라서 ONNX 변환은 모델 추론 속도를 줄이는 데 효과가 있었지만, 실제 전체 파이프라인에서는 전처리 최적화도 함께 고려해야 합니다.
