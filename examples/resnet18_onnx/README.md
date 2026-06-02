@@ -6,6 +6,7 @@
 
 - `export_onnx.py`: PyTorch ResNet18 모델을 `artifacts/resnet18.onnx`로 export하고 `onnx.checker.check_model`로 검증합니다.
 - `compare_outputs.py`: PyTorch 출력과 ONNX Runtime CPU 출력의 shape 및 오차를 비교합니다.
+- `benchmark.py`: PyTorch ResNet18과 ONNX Runtime ResNet18의 CPU 평균 추론 시간을 비교합니다.
 - `artifacts/`: export된 ONNX 파일이 저장되는 디렉터리입니다.
 
 ## 준비
@@ -59,3 +60,26 @@ np.allclose(rtol=1e-03, atol=1e-05): True
 ```
 
 `max abs diff`와 `mean abs diff`는 두 출력 사이의 절대 오차를 나타냅니다. ONNX 변환 과정에서 부동소수점 연산 순서가 조금 달라질 수 있으므로 아주 작은 차이는 정상입니다.
+
+## 3. PyTorch vs ONNX Runtime 추론 시간 benchmark
+
+ONNX 파일을 만든 뒤 다음 명령을 실행합니다.
+
+```bash
+python examples/resnet18_onnx/benchmark.py
+```
+
+`benchmark.py`는 `[1, 3, 224, 224]` shape의 같은 dummy input으로 warmup 10회, measurement 100회를 실행한 뒤 평균 latency를 ms 단위로 출력합니다. ONNX Runtime은 `CPUExecutionProvider` 기준으로 측정합니다.
+
+출력 예시는 다음과 같습니다.
+
+```text
+PyTorch latency(ms): 12.345
+ONNX Runtime latency(ms): 8.901
+```
+
+실행 환경에 따라 latency는 달라질 수 있으므로, 측정한 결과를 아래 표에 기록해 비교해 볼 수 있습니다.
+
+| Date | CPU / Machine | PyTorch latency(ms) | ONNX Runtime latency(ms) | Notes |
+| --- | --- | ---: | ---: | --- |
+| | | | | |
