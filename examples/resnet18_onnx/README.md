@@ -8,6 +8,7 @@
 - `compare_outputs.py`: PyTorch 출력과 ONNX Runtime CPU 출력의 shape 및 오차를 비교합니다.
 - `compare_image.py`: 실제 이미지 전처리 후 PyTorch와 ONNX Runtime의 raw output(logits)이 수치적으로 일관되는지 비교합니다. top-5 class index/probability는 보조 확인용으로만 출력합니다.
 - `benchmark.py`: PyTorch ResNet18과 ONNX Runtime ResNet18의 CPU 평균 추론 시간을 비교합니다.
+- `benchmark_image.py`: 실제 이미지 입력에서 PyTorch ResNet18과 ONNX Runtime ResNet18의 inference-only latency 및 end-to-end latency를 비교합니다.
 - `artifacts/`: export된 ONNX 파일이 저장되는 디렉터리입니다.
 
 ## 준비
@@ -135,3 +136,54 @@ ONNX Runtime latency(ms): 8.901
 | Date | CPU / Machine | PyTorch latency(ms) | ONNX Runtime latency(ms) | Notes |
 | --- | --- | ---: | ---: | --- |
 | | | | | |
+
+## 5. 실제 이미지 입력에서 PyTorch vs ONNX Runtime latency benchmark
+
+ONNX 파일을 만든 뒤 실제 이미지 파일 경로를 positional argument로 전달합니다.
+
+```bash
+python examples/resnet18_onnx/benchmark_image.py assets/test_mouse.jpg
+```
+
+기본 ONNX 파일 경로는 다음과 같습니다.
+
+```text
+examples/resnet18_onnx/artifacts/resnet18.onnx
+```
+
+다른 ONNX 파일을 사용하려면 `--onnx-path` 옵션을 지정할 수 있습니다.
+
+```bash
+python examples/resnet18_onnx/benchmark_image.py assets/test_mouse.jpg --onnx-path path/to/resnet18.onnx
+```
+
+`benchmark_image.py`는 `torchvision.models.ResNet18_Weights.DEFAULT.transforms()`로 실제 이미지를 전처리하고, warmup 10회와 measurement 100회 기준으로 평균 latency를 ms 단위로 출력합니다. PyTorch는 `model.eval()` 및 `torch.no_grad()`를 사용하고, ONNX Runtime은 `CPUExecutionProvider`를 사용합니다.
+
+측정 항목은 다음 두 가지입니다.
+
+- **inference-only latency**: 이미지를 한 번 로드하고 전처리해 만든 같은 tensor를 반복 추론합니다.
+- **end-to-end latency**: 매 반복마다 이미지 로딩, 전처리, 추론, softmax/top-5 후처리까지 포함합니다.
+
+출력 예시는 다음과 같습니다.
+
+```text
+Image path: assets/test_mouse.jpg
+Warmup runs: 10
+Measurement runs: 100
+PyTorch inference-only latency(ms): 12.345
+ONNX Runtime inference-only latency(ms): 8.901
+PyTorch end-to-end latency(ms): 15.678
+ONNX Runtime end-to-end latency(ms): 11.234
+```
+
+ONNX 파일이 아직 없으면 다음 명령으로 먼저 export합니다.
+
+```bash
+python examples/resnet18_onnx/export_onnx.py
+```
+
+실행 환경과 이미지에 따라 latency는 달라질 수 있으므로, 측정한 결과를 아래 표에 기록해 비교해 볼 수 있습니다.
+
+| Date | Image | CPU / Machine | PyTorch inference-only latency(ms) | ONNX Runtime inference-only latency(ms) | PyTorch end-to-end latency(ms) | ONNX Runtime end-to-end latency(ms) | Notes |
+| --- | --- | --- | ---: | ---: | ---: | ---: | --- |
+| | | | | | | | |
