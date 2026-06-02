@@ -131,11 +131,7 @@ PyTorch latency(ms): 12.345
 ONNX Runtime latency(ms): 8.901
 ```
 
-실행 환경에 따라 latency는 달라질 수 있으므로, 측정한 결과를 아래 표에 기록해 비교해 볼 수 있습니다.
-
-| Date | CPU / Machine | PyTorch latency(ms) | ONNX Runtime latency(ms) | Notes |
-| --- | --- | ---: | ---: | --- |
-| | | | | |
+실행 환경에 따라 latency는 달라질 수 있으므로, 동일한 warmup/measurement 조건에서 측정한 값을 기준으로 PyTorch와 ONNX Runtime 결과를 비교합니다.
 
 ## 5. 실제 이미지 입력에서 PyTorch vs ONNX Runtime latency benchmark
 
@@ -182,11 +178,7 @@ ONNX 파일이 아직 없으면 다음 명령으로 먼저 export합니다.
 python examples/resnet18_onnx/export_onnx.py
 ```
 
-실행 환경과 이미지에 따라 latency는 달라질 수 있으므로, 측정한 결과를 아래 표에 기록해 비교해 볼 수 있습니다.
-
-| Date | Image | CPU / Machine | PyTorch inference-only latency(ms) | ONNX Runtime inference-only latency(ms) | PyTorch end-to-end latency(ms) | ONNX Runtime end-to-end latency(ms) | Notes |
-| --- | --- | --- | ---: | ---: | ---: | ---: | --- |
-| | | | | | | | |
+실행 환경과 이미지에 따라 latency는 달라질 수 있으므로, 동일한 warmup/measurement 조건에서 측정한 값을 기준으로 PyTorch와 ONNX Runtime 결과를 비교합니다.
 
 ### 실제 이미지 benchmark 결과
 
