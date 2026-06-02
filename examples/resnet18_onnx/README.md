@@ -6,6 +6,7 @@
 
 - `export_onnx.py`: PyTorch ResNet18 모델을 `artifacts/resnet18.onnx`로 export하고 `onnx.checker.check_model`로 검증합니다.
 - `compare_outputs.py`: PyTorch 출력과 ONNX Runtime CPU 출력의 shape 및 오차를 비교합니다.
+- `compare_image.py`: 실제 이미지 전처리 후 PyTorch와 ONNX Runtime의 raw output(logits)이 수치적으로 일관되는지 비교합니다. top-5 class index/probability는 보조 확인용으로만 출력합니다.
 - `benchmark.py`: PyTorch ResNet18과 ONNX Runtime ResNet18의 CPU 평균 추론 시간을 비교합니다.
 - `artifacts/`: export된 ONNX 파일이 저장되는 디렉터리입니다.
 
@@ -61,7 +62,38 @@ np.allclose(rtol=1e-03, atol=1e-05): True
 
 `max abs diff`와 `mean abs diff`는 두 출력 사이의 절대 오차를 나타냅니다. ONNX 변환 과정에서 부동소수점 연산 순서가 조금 달라질 수 있으므로 아주 작은 차이는 정상입니다.
 
-## 3. PyTorch vs ONNX Runtime 추론 시간 benchmark
+
+## 3. 실제 이미지 입력에서 PyTorch vs ONNX Runtime logits 일관성 확인
+
+ONNX 파일을 만든 뒤 실제 이미지 파일 경로를 인자로 전달합니다.
+
+```bash
+python examples/resnet18_onnx/compare_image.py path/to/image.jpg
+```
+
+이 예제의 목적은 ImageNet 분류 정확도 평가가 아닙니다. class label 이름을 붙여 예측이 맞는지 평가하는 대신, `torchvision`의 ImageNet 전처리를 실제 이미지에 적용한 뒤 PyTorch와 ONNX Runtime이 내는 raw output(logits)이 수치적으로 일관되는지 확인합니다. 따라서 주요 출력은 `max abs diff`, `mean abs diff`, `cosine similarity`, `np.allclose`입니다.
+
+출력 예시는 다음과 같습니다.
+
+```text
+Image path: path/to/image.jpg
+PyTorch logits shape: (1, 1000)
+ONNX Runtime logits shape: (1, 1000)
+
+Primary raw logits consistency checks
+Max abs diff: 0.0000xxxx
+Mean abs diff: 0.0000xxxx
+Cosine similarity: 1.0000xxxx
+np.allclose(rtol=1e-03, atol=1e-05): True
+
+Auxiliary top-5 check (class index, softmax probability)
+PyTorch top-5: [(..., 0.xxxx), ...]
+ONNX Runtime top-5: [(..., 0.xxxx), ...]
+```
+
+top-5 class index/probability는 두 런타임의 결과가 직관적으로 비슷한지 보는 보조 확인용입니다. 이 스크립트는 class label 이름을 추가하지 않습니다.
+
+## 4. PyTorch vs ONNX Runtime 추론 시간 benchmark
 
 ONNX 파일을 만든 뒤 다음 명령을 실행합니다.
 
