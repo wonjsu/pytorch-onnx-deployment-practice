@@ -93,6 +93,26 @@ ONNX Runtime top-5: [(..., 0.xxxx), ...]
 
 top-5 class index/probability는 두 런타임의 결과가 직관적으로 비슷한지 보는 보조 확인용입니다. 이 스크립트는 class label 이름을 추가하지 않습니다.
 
+### 실제 이미지 입력 비교 결과
+
+아래 결과는 ImageNet 분류 정확도 평가가 아니라, ONNX 변환 후 실제 이미지 전처리까지 포함했을 때 PyTorch ResNet18과 ONNX Runtime ResNet18의 raw output(logits)이 수치적으로 일관되는지 확인하기 위한 실험입니다. top-5 class index/probability는 주요 평가 지표가 아니며, 두 런타임 출력이 직관적으로 같은 방향인지 살펴보는 보조 확인용입니다.
+
+저장소 루트에서 다음 명령으로 각 이미지를 비교했습니다.
+
+```bash
+python examples/resnet18_onnx/compare_image.py assets/test_mouse.jpg
+python examples/resnet18_onnx/compare_image.py assets/test_keyboard.jpg
+python examples/resnet18_onnx/compare_image.py assets/test_headphone.jpg
+```
+
+| Image | Max Abs Diff | Mean Abs Diff | Cosine Similarity | allclose |
+|---|---:|---:|---:|---|
+| test_mouse.jpg | 0.00001335 | 0.00000243 | 1.00000000 | True |
+| test_keyboard.jpg | 0.00000811 | 0.00000175 | 1.00000000 | True |
+| test_headphone.jpg | 0.00000906 | 0.00000202 | 1.00000000 | True |
+
+모든 이미지에서 output shape은 PyTorch와 ONNX Runtime 모두 `(1, 1000)`으로 동일했습니다. 세 이미지 모두 `np.allclose(rtol=1e-03, atol=1e-05)` 기준에서 `True`였으며, `max abs diff`는 약 `1e-5` 수준, `mean abs diff`는 약 `1e-6` 수준으로 측정되었습니다. 따라서 실제 이미지 입력에서도 ONNX Runtime 출력이 PyTorch 출력과 설정한 허용 오차 범위 내에서 수치적으로 일관됨을 확인했습니다. 또한 top-5 class index도 세 이미지에서 PyTorch와 ONNX Runtime이 동일한 순서로 나와, raw logits 비교 결과를 보조적으로 뒷받침했습니다.
+
 ## 4. PyTorch vs ONNX Runtime 추론 시간 benchmark
 
 ONNX 파일을 만든 뒤 다음 명령을 실행합니다.
