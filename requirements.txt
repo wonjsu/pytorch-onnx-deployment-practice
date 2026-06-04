@@ -3,3 +3,4 @@ torchvision
 onnx
 onnxruntime
 numpy
+ultralytics
