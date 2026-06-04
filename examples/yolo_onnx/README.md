@@ -22,7 +22,7 @@ pip install -r requirements.txt
 python examples/yolo_onnx/export_onnx.py
 ```
 
-스크립트는 `ultralytics`에서 `YOLO`를 import하고 `YOLO("yolov8n.pt")` 모델을 로드한 뒤, `model.export(format="onnx")` 방식으로 ONNX 파일을 생성합니다.
+스크립트는 `ultralytics`에서 `YOLO`를 import하고 `YOLO("yolov8n.pt")` 모델을 로드한 뒤, `model.export(format="onnx", imgsz=640, opset=17)` 방식으로 ONNX 파일을 생성하고, export 결과를 `examples/yolo_onnx/artifacts/yolov8n.onnx`에 저장합니다.
 
 ## 생성되는 ONNX 파일
 
