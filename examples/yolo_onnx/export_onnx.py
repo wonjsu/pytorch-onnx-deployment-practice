@@ -7,6 +7,7 @@ from ultralytics import YOLO
 
 
 EXAMPLE_DIR = Path(__file__).resolve().parent
+REPO_ROOT = EXAMPLE_DIR.parents[1]
 ARTIFACT_DIR = EXAMPLE_DIR / "artifacts"
 ONNX_PATH = ARTIFACT_DIR / "yolov8n.onnx"
 MODEL_NAME = "yolov8n.pt"
@@ -16,7 +17,9 @@ def main() -> None:
     """Export YOLOv8n to ONNX and place the artifact in the example directory."""
     model = YOLO(MODEL_NAME)
 
-    exported_path = Path(model.export(format="onnx")).resolve()
+    exported_path = Path(model.export(format="onnx", imgsz=640, opset=17)).resolve()
+    if not exported_path.exists():
+        exported_path = REPO_ROOT / "yolov8n.onnx"
 
     ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
     target_path = ONNX_PATH.resolve()
