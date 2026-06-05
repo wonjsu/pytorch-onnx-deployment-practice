@@ -11,7 +11,7 @@ YOLO는 이미지 안의 객체 위치와 종류를 동시에 예측하는 objec
 - class score: 각 bounding box가 어떤 클래스에 해당하는지에 대한 점수
 - NMS(Non-Maximum Suppression) 후처리: 중복 bounding box를 제거하고 최종 detection 결과를 선택하는 과정
 
-이번 단계에서는 YOLOv8n 모델을 ONNX로 export하고, ONNX Runtime으로 실제 이미지 입력에 대한 raw output shape을 확인한 뒤, `(1, 84, 8400)` raw output을 후처리해서 최종 detection 결과를 출력합니다. PyTorch/Ultralytics 결과와의 비교는 아직 포함하지 않습니다.
+이번 단계에서는 YOLOv8n 모델을 ONNX로 export하고, ONNX Runtime으로 실제 이미지 입력에 대한 raw output shape을 확인한 뒤, `(1, 84, 8400)` raw output을 후처리해서 최종 detection 결과를 출력합니다. 또한 같은 이미지에 대해 Ultralytics PyTorch 결과와 ONNX Runtime 후처리 결과를 나란히 출력해 사람이 눈으로 class, confidence, bbox가 비슷한지 확인할 수 있습니다.
 
 ## 실행 방법
 
@@ -57,10 +57,10 @@ python examples/yolo_onnx/postprocess_onnx.py assets/test_mouse.jpg \
   --iou-threshold 0.45
 ```
 
-최종 detection 결과는 다음 형식으로 출력됩니다.
+최종 detection 결과는 COCO 80 class 이름을 포함해 다음 형식으로 출력됩니다.
 
 ```text
-class_index=64 confidence=0.8732 bbox=(123.45, 67.89, 234.56, 345.67)
+class_index=64 class_name=mouse confidence=0.6620 bbox=(998.77, 1119.90, 2660.59, 2051.34)
 ```
 
 출력의 `bbox`는 `(x1, y1, x2, y2)` 순서이며, 640x640 입력 좌표계가 아니라 원본 이미지 좌표계로 복원된 좌표입니다.
@@ -79,7 +79,35 @@ YOLOv8n ONNX 모델의 raw output shape은 일반적으로 `(1, 84, 8400)`입니
 8. bbox를 `(center_x, center_y, width, height)`에서 `(x1, y1, x2, y2)`로 변환합니다.
 9. 640x640 입력 좌표계의 bbox에서 letterbox padding을 뺀 뒤 scale ratio로 나누고, 원본 이미지 범위로 clip해서 원본 이미지 좌표계로 복원합니다.
 10. IoU threshold 기본값 `0.45`로 class별 NMS를 적용해 중복 bbox를 제거합니다.
-11. 남은 detection을 `class index`, `confidence`, `bbox(x1, y1, x2, y2)` 형태로 출력합니다.
+11. 남은 detection을 `class index`, `class name`, `confidence`, `bbox(x1, y1, x2, y2)` 형태로 출력합니다.
+
+## Ultralytics PyTorch 결과와 ONNX Runtime 결과 비교
+
+`compare_ultralytics_onnx.py`는 같은 이미지에 대해 다음 두 결과를 나란히 출력합니다.
+
+1. `YOLO("yolov8n.pt")`로 실행한 Ultralytics PyTorch detection 결과
+2. `examples/yolo_onnx/artifacts/yolov8n.onnx`를 ONNX Runtime `CPUExecutionProvider`로 실행한 뒤 `postprocess_onnx.py`와 동일한 letterbox 전처리, bbox 복원, confidence threshold, class-aware NMS를 적용한 결과
+
+프로젝트 루트에서 이미지 경로를 positional argument로 전달해 실행합니다.
+
+```bash
+python examples/yolo_onnx/compare_ultralytics_onnx.py assets/test_mouse.jpg
+```
+
+기본 ONNX 모델 경로는 `examples/yolo_onnx/artifacts/yolov8n.onnx`입니다. 다른 ONNX 파일이나 threshold를 사용하려면 다음 옵션을 지정할 수 있습니다.
+
+```bash
+python examples/yolo_onnx/compare_ultralytics_onnx.py assets/test_mouse.jpg \
+  --onnx-path examples/yolo_onnx/artifacts/yolov8n.onnx \
+  --conf-threshold 0.25 \
+  --iou-threshold 0.45
+```
+
+비교 스크립트 출력에는 image path, Ultralytics detections, ONNX Runtime detections가 포함됩니다. 각 detection은 `class_index`, `class_name`, `confidence`, `bbox(x1, y1, x2, y2)`를 출력합니다. 이번 예제는 두 결과를 자동 매칭하거나 mAP를 계산하지 않고, 사람이 직접 class, confidence, bbox가 비슷한지 확인할 수 있는 형태로만 출력합니다.
+
+ResNet classification 예제처럼 logits 배열만 단순 비교하는 방식은 YOLO detection 비교에는 충분하지 않습니다. YOLO는 bbox 좌표 복원, confidence threshold, class 예측, NMS 후처리까지 거친 최종 detection을 함께 확인해야 합니다.
+
+참고로 `headphone`은 COCO 80 class에 포함되어 있지 않으므로, YOLOv8n 기본 COCO 모델에서는 헤드폰 이미지가 정확한 `headphone` class로 출력되지 않을 수 있습니다.
 
 ## 생성되는 ONNX 파일
 
