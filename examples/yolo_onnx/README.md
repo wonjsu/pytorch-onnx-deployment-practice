@@ -30,7 +30,9 @@ ONNX Runtime으로 실제 이미지를 입력해 raw output shape을 확인하�
 python examples/yolo_onnx/infer_onnx.py assets/test_mouse.jpg
 ```
 
-`infer_onnx.py`는 입력 이미지를 640x640으로 전처리한 뒤 입력 tensor shape, ONNX output 개수, 각 output shape만 출력합니다.
+`infer_onnx.py`는 입력 이미지를 letterbox 방식으로 640x640에 맞춰 전처리한 뒤 입력 tensor shape, ONNX output 개수, 각 output shape만 출력합니다.
+
+YOLO 계열 detection에서는 원본 이미지를 정사각형으로 강제 resize하면 aspect ratio가 깨져 객체 모양과 bbox 좌표 복원에 영향을 줄 수 있습니다. 이 예제는 원본 비율을 유지해 640x640 내부에 resize하고 남는 영역을 `114` 값으로 padding하는 letterbox 전처리를 사용합니다.
 
 ## ONNX raw output 후처리 실행 방법
 
@@ -67,7 +69,7 @@ class_index=64 confidence=0.8732 bbox=(123.45, 67.89, 234.56, 345.67)
 
 YOLOv8n ONNX 모델의 raw output shape은 일반적으로 `(1, 84, 8400)`입니다.
 
-1. 이미지를 RGB로 로드하고 YOLO 입력 크기인 640x640으로 resize합니다.
+1. 이미지를 RGB로 로드하고 원본 비율을 유지한 채 YOLO 입력 크기인 640x640 안에 맞도록 resize한 뒤, 남는 영역을 `114` 값으로 padding하는 letterbox 전처리를 적용합니다.
 2. 픽셀 값을 `0.0~1.0` 범위로 정규화하고, tensor layout을 `HWC`에서 `NCHW`로 바꿔 `(1, 3, 640, 640)` 입력 tensor를 만듭니다.
 3. ONNX Runtime `CPUExecutionProvider`로 inference를 실행해 raw output `(1, 84, 8400)`을 얻습니다.
 4. raw output의 batch 차원을 제거하고 transpose해서 candidate 단위 배열 `(8400, 84)`로 변환합니다.
@@ -75,7 +77,7 @@ YOLOv8n ONNX 모델의 raw output shape은 일반적으로 `(1, 84, 8400)`입니
 6. 80개 class score 중 최대값을 confidence로 사용하고, 최대값의 위치를 class index로 사용합니다.
 7. confidence가 threshold 기본값 `0.25` 이상인 candidate만 남깁니다.
 8. bbox를 `(center_x, center_y, width, height)`에서 `(x1, y1, x2, y2)`로 변환합니다.
-9. 640x640 입력 좌표계의 bbox를 원본 이미지의 width/height 비율에 맞춰 원본 이미지 좌표계로 복원합니다.
+9. 640x640 입력 좌표계의 bbox에서 letterbox padding을 뺀 뒤 scale ratio로 나누고, 원본 이미지 범위로 clip해서 원본 이미지 좌표계로 복원합니다.
 10. IoU threshold 기본값 `0.45`로 class별 NMS를 적용해 중복 bbox를 제거합니다.
 11. 남은 detection을 `class index`, `confidence`, `bbox(x1, y1, x2, y2)` 형태로 출력합니다.
 
