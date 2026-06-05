@@ -11,6 +11,7 @@ from PIL import Image
 EXAMPLE_DIR = Path(__file__).resolve().parent
 DEFAULT_ONNX_PATH = EXAMPLE_DIR / "artifacts" / "yolov8n.onnx"
 INPUT_SIZE = (640, 640)
+PADDING_VALUE = 114
 
 
 def parse_args() -> argparse.Namespace:
@@ -32,16 +33,36 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def preprocess_image(image_path: Path) -> np.ndarray:
-    """Load an image and convert it to a YOLOv8n 640x640 NCHW tensor."""
+def letterbox_preprocess_image(
+    image_path: Path,
+) -> tuple[np.ndarray, tuple[int, int], float, int, int]:
+    """Load an image and letterbox it to a YOLOv8n 640x640 NCHW tensor."""
     if not image_path.exists():
         raise FileNotFoundError(f"Image file not found: {image_path}")
 
     image = Image.open(image_path).convert("RGB")
-    image = image.resize(INPUT_SIZE)
-    image_array = np.asarray(image, dtype=np.float32) / 255.0
+    original_size = image.size
+    original_width, original_height = original_size
+    target_width, target_height = INPUT_SIZE
+
+    scale_ratio = min(target_width / original_width, target_height / original_height)
+    resized_width = int(round(original_width * scale_ratio))
+    resized_height = int(round(original_height * scale_ratio))
+    pad_x = (target_width - resized_width) // 2
+    pad_y = (target_height - resized_height) // 2
+
+    resized_image = image.resize(
+        (resized_width, resized_height), Image.Resampling.BILINEAR
+    )
+    letterboxed_image = Image.new(
+        "RGB", INPUT_SIZE, (PADDING_VALUE, PADDING_VALUE, PADDING_VALUE)
+    )
+    letterboxed_image.paste(resized_image, (pad_x, pad_y))
+
+    image_array = np.asarray(letterboxed_image, dtype=np.float32) / 255.0
     image_array = np.transpose(image_array, (2, 0, 1))
-    return np.expand_dims(image_array, axis=0)
+    input_tensor = np.expand_dims(image_array, axis=0)
+    return input_tensor, original_size, scale_ratio, pad_x, pad_y
 
 
 def main() -> None:
@@ -52,7 +73,7 @@ def main() -> None:
     if not onnx_path.exists():
         raise FileNotFoundError(f"ONNX model file not found: {onnx_path}")
 
-    input_tensor = preprocess_image(args.image_path)
+    input_tensor, _, _, _, _ = letterbox_preprocess_image(args.image_path)
     print(f"Input tensor shape: {input_tensor.shape}")
 
     session = ort.InferenceSession(

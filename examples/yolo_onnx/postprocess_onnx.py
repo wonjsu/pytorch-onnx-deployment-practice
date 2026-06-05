@@ -11,6 +11,7 @@ from PIL import Image
 EXAMPLE_DIR = Path(__file__).resolve().parent
 DEFAULT_ONNX_PATH = EXAMPLE_DIR / "artifacts" / "yolov8n.onnx"
 INPUT_SIZE = (640, 640)
+PADDING_VALUE = 114
 DEFAULT_CONF_THRESHOLD = 0.25
 DEFAULT_IOU_THRESHOLD = 0.45
 EXPECTED_OUTPUT_SHAPE = (1, 84, 8400)
@@ -47,17 +48,36 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def preprocess_image(image_path: Path) -> tuple[np.ndarray, tuple[int, int]]:
-    """Load an image and convert it to a YOLOv8n 640x640 NCHW tensor."""
+def letterbox_preprocess_image(
+    image_path: Path,
+) -> tuple[np.ndarray, tuple[int, int], float, int, int]:
+    """Load an image and letterbox it to a YOLOv8n 640x640 NCHW tensor."""
     if not image_path.exists():
         raise FileNotFoundError(f"Image file not found: {image_path}")
 
     image = Image.open(image_path).convert("RGB")
     original_size = image.size
-    resized_image = image.resize(INPUT_SIZE)
-    image_array = np.asarray(resized_image, dtype=np.float32) / 255.0
+    original_width, original_height = original_size
+    target_width, target_height = INPUT_SIZE
+
+    scale_ratio = min(target_width / original_width, target_height / original_height)
+    resized_width = int(round(original_width * scale_ratio))
+    resized_height = int(round(original_height * scale_ratio))
+    pad_x = (target_width - resized_width) // 2
+    pad_y = (target_height - resized_height) // 2
+
+    resized_image = image.resize(
+        (resized_width, resized_height), Image.Resampling.BILINEAR
+    )
+    letterboxed_image = Image.new(
+        "RGB", INPUT_SIZE, (PADDING_VALUE, PADDING_VALUE, PADDING_VALUE)
+    )
+    letterboxed_image.paste(resized_image, (pad_x, pad_y))
+
+    image_array = np.asarray(letterboxed_image, dtype=np.float32) / 255.0
     image_array = np.transpose(image_array, (2, 0, 1))
-    return np.expand_dims(image_array, axis=0), original_size
+    input_tensor = np.expand_dims(image_array, axis=0)
+    return input_tensor, original_size, scale_ratio, pad_x, pad_y
 
 
 def xywh_to_xyxy(boxes: np.ndarray) -> np.ndarray:
@@ -76,19 +96,14 @@ def xywh_to_xyxy(boxes: np.ndarray) -> np.ndarray:
 def restore_original_coordinates(
     boxes: np.ndarray,
     original_size: tuple[int, int],
+    scale_ratio: float,
+    pad_x: int,
+    pad_y: int,
 ) -> np.ndarray:
-    """Scale 640x640 input-space boxes back to the original image coordinates."""
+    """Undo letterbox padding/scale and clip boxes to original image bounds."""
     original_width, original_height = original_size
-    scale = np.array(
-        [
-            original_width / INPUT_SIZE[0],
-            original_height / INPUT_SIZE[1],
-            original_width / INPUT_SIZE[0],
-            original_height / INPUT_SIZE[1],
-        ],
-        dtype=np.float32,
-    )
-    boxes = boxes * scale
+    boxes[:, [0, 2]] = (boxes[:, [0, 2]] - pad_x) / scale_ratio
+    boxes[:, [1, 3]] = (boxes[:, [1, 3]] - pad_y) / scale_ratio
     boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, original_width)
     boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, original_height)
     return boxes
@@ -157,6 +172,9 @@ def class_aware_nms(
 def postprocess_output(
     raw_output: np.ndarray,
     original_size: tuple[int, int],
+    scale_ratio: float,
+    pad_x: int,
+    pad_y: int,
     conf_threshold: float,
     iou_threshold: float,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -180,7 +198,9 @@ def postprocess_output(
     class_indices = class_indices[confidence_mask]
 
     boxes_xyxy = xywh_to_xyxy(boxes_xywh)
-    boxes_xyxy = restore_original_coordinates(boxes_xyxy, original_size)
+    boxes_xyxy = restore_original_coordinates(
+        boxes_xyxy, original_size, scale_ratio, pad_x, pad_y
+    )
 
     selected_indices = class_aware_nms(
         boxes_xyxy, confidences, class_indices, iou_threshold
@@ -200,7 +220,9 @@ def main() -> None:
     if not onnx_path.exists():
         raise FileNotFoundError(f"ONNX model file not found: {onnx_path}")
 
-    input_tensor, original_size = preprocess_image(args.image_path)
+    input_tensor, original_size, scale_ratio, pad_x, pad_y = letterbox_preprocess_image(
+        args.image_path
+    )
     session = ort.InferenceSession(
         str(onnx_path),
         providers=["CPUExecutionProvider"],
@@ -214,6 +236,9 @@ def main() -> None:
     class_indices, confidences, boxes = postprocess_output(
         outputs[0],
         original_size,
+        scale_ratio,
+        pad_x,
+        pad_y,
         args.conf_threshold,
         args.iou_threshold,
     )
