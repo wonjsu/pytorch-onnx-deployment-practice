@@ -134,7 +134,7 @@ python examples/yolo_onnx/compare_ultralytics_pt_onnx.py assets/test_mouse.jpg \
   --match-iou-threshold 0.5
 ```
 
-출력에는 image path, Ultralytics PyTorch detections, Ultralytics ONNX detections가 포함됩니다. 기존 detection list 출력은 유지되며, 각 detection은 다음 형식으로 출력됩니다.
+출력에는 image path, Ultralytics PyTorch detections, Ultralytics ONNX detections가 포함됩니다. 기존 detection list 출력은 유지되며, 각 detection은 `class_index`뿐 아니라 COCO 80 class name으로 보정된 `class_name`도 함께 다음 형식으로 출력됩니다. 일부 Ultralytics ONNX 결과에서 `class61`, `class66`처럼 generic name이 들어오더라도 class index를 기준으로 `toilet`, `keyboard` 같은 COCO class name을 보여줍니다.
 
 ```text
 class_index=64 class_name=mouse confidence=0.6620 bbox=(998.77, 1119.90, 2660.59, 2051.34)
@@ -145,6 +145,48 @@ class_index=64 class_name=mouse confidence=0.6620 bbox=(998.77, 1119.90, 2660.59
 Object detection에서는 bbox 위치가 얼마나 겹치는지 비교하기 위해 IoU(Intersection over Union)를 사용합니다. IoU는 두 bbox의 intersection area를 union area로 나눈 값이며, 값이 클수록 두 bbox 위치가 더 비슷하다는 뜻입니다. mAP는 ground truth annotation이 필요하므로 현재 실습에서는 실제 정답과의 성능 평가 대신 PyTorch와 ONNX detection 간 consistency check를 위해 class match, confidence difference, bbox IoU를 사용합니다. mAP@0.5와 mAP@0.5:0.95는 실제 dataset annotation이 있을 때 사용하는 일반적인 object detection 평가 지표입니다.
 
 이 스크립트에서 PyTorch 결과와 ONNX 결과가 서로 비슷하다면 ONNX 변환은 대체로 정상이고, 차이는 직접 구현한 postprocess 경로에서 발생했을 가능성이 큽니다. 반대로 Ultralytics API만 사용해도 PyTorch 결과와 ONNX 결과가 크게 다르다면 exported ONNX 모델 또는 변환 설정을 먼저 확인해야 합니다.
+
+## YOLO latency benchmark
+
+`benchmark_yolo.py`는 같은 입력 이미지에 대해 YOLOv8n PyTorch/Ultralytics 경로와 ONNX Runtime 경로의 latency를 비교합니다. 이미지 경로는 positional argument로 전달하며, 기본 ONNX 모델 경로는 `examples/yolo_onnx/artifacts/yolov8n.onnx`입니다. Ultralytics PyTorch 모델은 `YOLO("yolov8n.pt")`를 사용하고, direct ONNX Runtime 측정은 `CPUExecutionProvider`를 사용합니다.
+
+```bash
+python examples/yolo_onnx/benchmark_yolo.py assets/test_mouse.jpg
+```
+
+다른 ONNX 파일, threshold, warmup/측정 반복 횟수를 사용하려면 다음 옵션을 지정할 수 있습니다. confidence threshold 기본값은 `0.25`, NMS IoU threshold 기본값은 `0.45`, warmup 기본값은 `10`, 측정 반복 횟수 기본값은 `100`입니다.
+
+```bash
+python examples/yolo_onnx/benchmark_yolo.py assets/test_mouse.jpg \
+  --onnx-path examples/yolo_onnx/artifacts/yolov8n.onnx \
+  --conf-threshold 0.25 \
+  --iou-threshold 0.45 \
+  --warmup 10 \
+  --runs 100
+```
+
+benchmark 출력에는 image path, warmup runs, measurement runs와 함께 다음 평균 latency가 ms 단위로 포함됩니다.
+
+- `Ultralytics PyTorch end-to-end latency`: 이미지 경로 입력부터 `YOLO("yolov8n.pt")` predict 결과까지 포함합니다.
+- `Ultralytics ONNX end-to-end latency`: `YOLO(onnx_path)`로 ONNX 모델을 Ultralytics API에서 실행하는 전체 시간을 포함합니다.
+- `Direct ONNX Runtime inference-only latency`: 이미지를 한 번 letterbox 전처리해 만든 input tensor를 재사용하고 `session.run()`만 반복 측정합니다.
+- `Direct ONNX Runtime postprocess latency`: 동일한 raw output을 기준으로 bbox decode, confidence threshold, class-aware NMS 후처리만 반복 측정합니다.
+- `Direct ONNX Runtime end-to-end latency`: 매 반복마다 이미지 로드, letterbox 전처리, ONNX Runtime `session.run()`, postprocess/NMS까지 포함합니다.
+
+출력 예시는 다음과 같습니다.
+
+```text
+Image path: assets/test_mouse.jpg
+Warmup runs: 10
+Measurement runs: 100
+Ultralytics PyTorch end-to-end latency(ms): ...
+Ultralytics ONNX end-to-end latency(ms): ...
+Direct ONNX Runtime inference-only latency(ms): ...
+Direct ONNX Runtime postprocess latency(ms): ...
+Direct ONNX Runtime end-to-end latency(ms): ...
+```
+
+YOLO benchmark에서는 모델 forward 시간만 보면 실제 사용자가 체감하는 latency를 과소평가할 수 있습니다. ResNet classification 모델은 보통 하나의 class logits/probability를 얻는 흐름이 핵심이지만, YOLO 같은 detection 모델은 bbox decode, confidence threshold, class 선택, NMS 같은 후처리 비용이 최종 detection 생성에 포함됩니다. 따라서 inference-only latency와 함께 전처리, 후처리, NMS까지 포함한 end-to-end latency도 함께 확인해야 합니다.
 
 ## 생성되는 ONNX 파일
 

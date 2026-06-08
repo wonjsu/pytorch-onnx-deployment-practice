@@ -9,6 +9,89 @@ DEFAULT_CONF_THRESHOLD = 0.05
 DEFAULT_IOU_THRESHOLD = 0.45
 DEFAULT_MATCH_IOU_THRESHOLD = 0.5
 
+COCO_CLASS_NAMES = [
+    "person",
+    "bicycle",
+    "car",
+    "motorcycle",
+    "airplane",
+    "bus",
+    "train",
+    "truck",
+    "boat",
+    "traffic light",
+    "fire hydrant",
+    "stop sign",
+    "parking meter",
+    "bench",
+    "bird",
+    "cat",
+    "dog",
+    "horse",
+    "sheep",
+    "cow",
+    "elephant",
+    "bear",
+    "zebra",
+    "giraffe",
+    "backpack",
+    "umbrella",
+    "handbag",
+    "tie",
+    "suitcase",
+    "frisbee",
+    "skis",
+    "snowboard",
+    "sports ball",
+    "kite",
+    "baseball bat",
+    "baseball glove",
+    "skateboard",
+    "surfboard",
+    "tennis racket",
+    "bottle",
+    "wine glass",
+    "cup",
+    "fork",
+    "knife",
+    "spoon",
+    "bowl",
+    "banana",
+    "apple",
+    "sandwich",
+    "orange",
+    "broccoli",
+    "carrot",
+    "hot dog",
+    "pizza",
+    "donut",
+    "cake",
+    "chair",
+    "couch",
+    "potted plant",
+    "bed",
+    "dining table",
+    "toilet",
+    "tv",
+    "laptop",
+    "mouse",
+    "remote",
+    "keyboard",
+    "cell phone",
+    "microwave",
+    "oven",
+    "toaster",
+    "sink",
+    "refrigerator",
+    "book",
+    "clock",
+    "vase",
+    "scissors",
+    "teddy bear",
+    "hair drier",
+    "toothbrush",
+]
+
 
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
@@ -89,7 +172,9 @@ def format_detection(
 
 
 def get_class_name(names: dict[int, str] | list[str], class_index: int) -> str:
-    """Return a class name from an Ultralytics result names mapping."""
+    """Return the COCO class name for a YOLO class index when available."""
+    if 0 <= class_index < len(COCO_CLASS_NAMES):
+        return COCO_CLASS_NAMES[class_index]
     if isinstance(names, dict):
         return names.get(class_index, "unknown")
     if 0 <= class_index < len(names):
