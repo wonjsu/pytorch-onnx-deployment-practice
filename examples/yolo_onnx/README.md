@@ -109,6 +109,38 @@ ResNet classification 예제처럼 logits 배열만 단순 비교하는 방식�
 
 참고로 `headphone`은 COCO 80 class에 포함되어 있지 않으므로, YOLOv8n 기본 COCO 모델에서는 헤드폰 이미지가 정확한 `headphone` class로 출력되지 않을 수 있습니다.
 
+## Ultralytics API만 사용한 PyTorch vs ONNX 비교
+
+`compare_ultralytics_pt_onnx.py`는 직접 구현한 ONNX letterbox, NMS, postprocess 코드를 전혀 사용하지 않고, Ultralytics `YOLO` API만 사용해 같은 이미지의 detection 결과를 비교합니다. 이 확인 단계의 목적은 PyTorch YOLOv8n 모델과 exported ONNX 모델 사이의 차이가 ONNX 모델 변환 자체에서 발생한 것인지, 아니면 우리가 직접 구현한 ONNX postprocess 로직의 차이에서 발생한 것인지 구분하는 것입니다.
+
+스크립트는 다음 두 모델을 모두 Ultralytics API로 로드한 뒤 `predict`를 실행합니다.
+
+1. `YOLO("yolov8n.pt")` PyTorch 모델
+2. `YOLO("examples/yolo_onnx/artifacts/yolov8n.onnx")` exported ONNX 모델
+
+프로젝트 루트에서 이미지 경로를 positional argument로 전달해 실행합니다. 기본 ONNX 모델 경로는 `examples/yolo_onnx/artifacts/yolov8n.onnx`입니다.
+
+```bash
+python examples/yolo_onnx/compare_ultralytics_pt_onnx.py assets/test_mouse.jpg
+```
+
+다른 ONNX 파일이나 threshold를 사용하려면 다음 옵션을 지정할 수 있습니다. confidence threshold 기본값은 `0.05`, IoU threshold 기본값은 `0.45`입니다.
+
+```bash
+python examples/yolo_onnx/compare_ultralytics_pt_onnx.py assets/test_mouse.jpg \
+  --onnx-path examples/yolo_onnx/artifacts/yolov8n.onnx \
+  --conf-threshold 0.05 \
+  --iou-threshold 0.45
+```
+
+출력에는 image path, Ultralytics PyTorch detections, Ultralytics ONNX detections가 포함됩니다. 각 detection은 다음 형식으로 출력됩니다.
+
+```text
+class_index=64 class_name=mouse confidence=0.6620 bbox=(998.77, 1119.90, 2660.59, 2051.34)
+```
+
+이 스크립트에서 PyTorch 결과와 ONNX 결과가 서로 비슷하다면 ONNX 변환은 대체로 정상이고, 차이는 직접 구현한 postprocess 경로에서 발생했을 가능성이 큽니다. 반대로 Ultralytics API만 사용해도 PyTorch 결과와 ONNX 결과가 크게 다르다면 exported ONNX 모델 또는 변환 설정을 먼저 확인해야 합니다.
+
 ## 생성되는 ONNX 파일
 
 export가 끝나면 다음 경로에 ONNX 파일이 생성됩니다.
