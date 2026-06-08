@@ -65,15 +65,6 @@ def format_detection(
     )
 
 
-def get_model_class_name(model_names: object, class_index: int) -> str:
-    """Return a class name from Ultralytics names metadata."""
-    if isinstance(model_names, dict):
-        return str(model_names.get(class_index, get_coco_class_name(class_index)))
-    if isinstance(model_names, list) and 0 <= class_index < len(model_names):
-        return str(model_names[class_index])
-    return get_coco_class_name(class_index)
-
-
 def print_ultralytics_detections(
     image_path: Path,
     conf_threshold: float,
@@ -87,6 +78,7 @@ def print_ultralytics_detections(
         str(image_path),
         conf=conf_threshold,
         iou=iou_threshold,
+        imgsz=640,
         verbose=False,
     )
     result = results[0]
@@ -100,10 +92,8 @@ def print_ultralytics_detections(
     xyxy_boxes = boxes.xyxy.cpu().numpy()
     confidences = boxes.conf.cpu().numpy()
     class_indices = boxes.cls.cpu().numpy().astype(int)
-    model_names = model.names
-
     for class_index, confidence, box in zip(class_indices, confidences, xyxy_boxes):
-        class_name = get_model_class_name(model_names, class_index)
+        class_name = get_coco_class_name(class_index)
         print(
             "  "
             + format_detection(

@@ -85,7 +85,7 @@ YOLOv8n ONNX 모델의 raw output shape은 일반적으로 `(1, 84, 8400)`입니
 
 `compare_ultralytics_onnx.py`는 같은 이미지에 대해 다음 두 결과를 나란히 출력합니다.
 
-1. `YOLO("yolov8n.pt")`로 실행한 Ultralytics PyTorch detection 결과
+1. `YOLO("yolov8n.pt")`로 실행한 Ultralytics PyTorch detection 결과. 비교 기준을 맞추기 위해 640x640 입력 크기와 동일한 confidence/IoU threshold를 사용합니다.
 2. `examples/yolo_onnx/artifacts/yolov8n.onnx`를 ONNX Runtime `CPUExecutionProvider`로 실행한 뒤 `postprocess_onnx.py`와 동일한 letterbox 전처리, bbox 복원, confidence threshold, class-aware NMS를 적용한 결과
 
 프로젝트 루트에서 이미지 경로를 positional argument로 전달해 실행합니다.
