@@ -124,20 +124,25 @@ ResNet classification 예제처럼 logits 배열만 단순 비교하는 방식�
 python examples/yolo_onnx/compare_ultralytics_pt_onnx.py assets/test_mouse.jpg
 ```
 
-다른 ONNX 파일이나 threshold를 사용하려면 다음 옵션을 지정할 수 있습니다. confidence threshold 기본값은 `0.05`, IoU threshold 기본값은 `0.45`입니다.
+다른 ONNX 파일이나 threshold를 사용하려면 다음 옵션을 지정할 수 있습니다. confidence threshold 기본값은 `0.05`, NMS IoU threshold 기본값은 `0.45`, PyTorch/ONNX detection 매칭용 IoU threshold 기본값은 `0.5`입니다. `--match-iou-threshold` 이상의 bbox IoU를 가진 같은 class detection pair를 matched pair로 판단합니다.
 
 ```bash
 python examples/yolo_onnx/compare_ultralytics_pt_onnx.py assets/test_mouse.jpg \
   --onnx-path examples/yolo_onnx/artifacts/yolov8n.onnx \
   --conf-threshold 0.05 \
-  --iou-threshold 0.45
+  --iou-threshold 0.45 \
+  --match-iou-threshold 0.5
 ```
 
-출력에는 image path, Ultralytics PyTorch detections, Ultralytics ONNX detections가 포함됩니다. 각 detection은 다음 형식으로 출력됩니다.
+출력에는 image path, Ultralytics PyTorch detections, Ultralytics ONNX detections가 포함됩니다. 기존 detection list 출력은 유지되며, 각 detection은 다음 형식으로 출력됩니다.
 
 ```text
 class_index=64 class_name=mouse confidence=0.6620 bbox=(998.77, 1119.90, 2660.59, 2051.34)
 ```
+
+추가로 PyTorch detection과 ONNX detection을 `class_index` 기준으로 나눈 뒤, 같은 class 안에서 bbox IoU가 가장 높은 pair부터 greedy하게 매칭합니다. 이미 매칭된 ONNX detection은 다시 매칭하지 않습니다. matched pair 출력에는 `class_index`, `class_name`, PyTorch confidence, ONNX confidence, confidence absolute difference, bbox IoU, PyTorch bbox, ONNX bbox가 포함됩니다. match threshold 미만의 같은 class best pair는 참고용으로 따로 보여줄 수 있지만 matched pair로 계산하지 않으며, 매칭되지 않은 PyTorch detection과 ONNX detection도 각각 `Unmatched PyTorch detections`, `Unmatched ONNX detections`로 출력합니다.
+
+Object detection에서는 bbox 위치가 얼마나 겹치는지 비교하기 위해 IoU(Intersection over Union)를 사용합니다. IoU는 두 bbox의 intersection area를 union area로 나눈 값이며, 값이 클수록 두 bbox 위치가 더 비슷하다는 뜻입니다. mAP는 ground truth annotation이 필요하므로 현재 실습에서는 실제 정답과의 성능 평가 대신 PyTorch와 ONNX detection 간 consistency check를 위해 class match, confidence difference, bbox IoU를 사용합니다. mAP@0.5와 mAP@0.5:0.95는 실제 dataset annotation이 있을 때 사용하는 일반적인 object detection 평가 지표입니다.
 
 이 스크립트에서 PyTorch 결과와 ONNX 결과가 서로 비슷하다면 ONNX 변환은 대체로 정상이고, 차이는 직접 구현한 postprocess 경로에서 발생했을 가능성이 큽니다. 반대로 Ultralytics API만 사용해도 PyTorch 결과와 ONNX 결과가 크게 다르다면 exported ONNX 모델 또는 변환 설정을 먼저 확인해야 합니다.
 
