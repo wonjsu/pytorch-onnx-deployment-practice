@@ -68,14 +68,18 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def letterbox_preprocess_image(
-    image_path: Path,
-) -> tuple[np.ndarray, tuple[int, int], float, int, int]:
-    """Load an image and letterbox it to a YOLOv8n 640x640 NCHW tensor."""
+def load_rgb_image(image_path: Path) -> Image.Image:
+    """Load an image from disk and convert it to RGB."""
     if not image_path.exists():
         raise FileNotFoundError(f"Image file not found: {image_path}")
 
-    image = Image.open(image_path).convert("RGB")
+    return Image.open(image_path).convert("RGB")
+
+
+def letterbox_preprocess_pil_image(
+    image: Image.Image,
+) -> tuple[np.ndarray, tuple[int, int], float, int, int]:
+    """Letterbox a loaded PIL image to a YOLOv8n 640x640 NCHW tensor."""
     original_size = image.size
     original_width, original_height = original_size
     target_width, target_height = INPUT_SIZE
@@ -98,6 +102,14 @@ def letterbox_preprocess_image(
     image_array = np.transpose(image_array, (2, 0, 1))
     input_tensor = np.expand_dims(image_array, axis=0)
     return input_tensor, original_size, scale_ratio, pad_x, pad_y
+
+
+def letterbox_preprocess_image(
+    image_path: Path,
+) -> tuple[np.ndarray, tuple[int, int], float, int, int]:
+    """Load an image and letterbox it to a YOLOv8n 640x640 NCHW tensor."""
+    image = load_rgb_image(image_path)
+    return letterbox_preprocess_pil_image(image)
 
 
 def xywh_to_xyxy(boxes: np.ndarray) -> np.ndarray:
@@ -261,6 +273,89 @@ def run_direct_onnx(
     return outputs[0]
 
 
+def benchmark_direct_onnx_breakdown(
+    image_path: Path,
+    session: ort.InferenceSession,
+    input_name: str,
+    conf_threshold: float,
+    iou_threshold: float,
+    warmup_runs: int,
+    measurement_runs: int,
+) -> dict[str, float]:
+    """Measure direct ONNX Runtime pipeline stage latency."""
+    if warmup_runs < 0:
+        raise ValueError("warmup must be greater than or equal to 0")
+    if measurement_runs <= 0:
+        raise ValueError("runs must be greater than 0")
+
+    for _ in range(warmup_runs):
+        image = load_rgb_image(image_path)
+        input_tensor, original_size, scale_ratio, pad_x, pad_y = (
+            letterbox_preprocess_pil_image(image)
+        )
+        raw_output = run_direct_onnx(session, input_name, input_tensor)
+        postprocess_output(
+            raw_output,
+            original_size,
+            scale_ratio,
+            pad_x,
+            pad_y,
+            conf_threshold,
+            iou_threshold,
+        )
+
+    image_load_seconds = 0.0
+    preprocess_seconds = 0.0
+    inference_seconds = 0.0
+    postprocess_seconds = 0.0
+    total_seconds = 0.0
+
+    for _ in range(measurement_runs):
+        total_started_at = time.perf_counter()
+
+        started_at = time.perf_counter()
+        image = load_rgb_image(image_path)
+        image_load_seconds += time.perf_counter() - started_at
+
+        started_at = time.perf_counter()
+        input_tensor, original_size, scale_ratio, pad_x, pad_y = (
+            letterbox_preprocess_pil_image(image)
+        )
+        preprocess_seconds += time.perf_counter() - started_at
+
+        started_at = time.perf_counter()
+        outputs = session.run(None, {input_name: input_tensor})
+        inference_seconds += time.perf_counter() - started_at
+        if len(outputs) != 1:
+            raise ValueError(
+                f"Expected one YOLOv8n ONNX output, but got {len(outputs)}"
+            )
+        raw_output = outputs[0]
+
+        started_at = time.perf_counter()
+        postprocess_output(
+            raw_output,
+            original_size,
+            scale_ratio,
+            pad_x,
+            pad_y,
+            conf_threshold,
+            iou_threshold,
+        )
+        postprocess_seconds += time.perf_counter() - started_at
+
+        total_seconds += time.perf_counter() - total_started_at
+
+    milliseconds = 1000.0 / measurement_runs
+    return {
+        "image_load": image_load_seconds * milliseconds,
+        "preprocess": preprocess_seconds * milliseconds,
+        "inference": inference_seconds * milliseconds,
+        "postprocess": postprocess_seconds * milliseconds,
+        "total": total_seconds * milliseconds,
+    }
+
+
 def main() -> None:
     """Run YOLO latency benchmarks and print average latency in milliseconds."""
     args = parse_args()
@@ -315,21 +410,6 @@ def main() -> None:
             args.iou_threshold,
         )
 
-    def run_direct_end_to_end() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        current_input, current_size, current_scale, current_pad_x, current_pad_y = (
-            letterbox_preprocess_image(args.image_path)
-        )
-        current_raw_output = run_direct_onnx(session, input_name, current_input)
-        return postprocess_output(
-            current_raw_output,
-            current_size,
-            current_scale,
-            current_pad_x,
-            current_pad_y,
-            args.conf_threshold,
-            args.iou_threshold,
-        )
-
     pytorch_latency = benchmark_ms(
         run_ultralytics_pytorch, args.warmup, args.runs
     )
@@ -342,9 +422,16 @@ def main() -> None:
     direct_postprocess_latency = benchmark_ms(
         run_direct_postprocess, args.warmup, args.runs
     )
-    direct_end_to_end_latency = benchmark_ms(
-        run_direct_end_to_end, args.warmup, args.runs
+    direct_breakdown = benchmark_direct_onnx_breakdown(
+        args.image_path,
+        session,
+        input_name,
+        args.conf_threshold,
+        args.iou_threshold,
+        args.warmup,
+        args.runs,
     )
+    direct_end_to_end_latency = direct_breakdown["total"]
 
     print(f"Image path: {args.image_path}")
     print(f"Warmup runs: {args.warmup}")
@@ -363,6 +450,13 @@ def main() -> None:
         "Direct ONNX Runtime end-to-end latency(ms): "
         f"{direct_end_to_end_latency:.3f}"
     )
+    print()
+    print("Direct ONNX breakdown:")
+    print(f"  image load latency(ms): {direct_breakdown['image_load']:.3f}")
+    print(f"  letterbox preprocess latency(ms): {direct_breakdown['preprocess']:.3f}")
+    print(f"  session.run inference latency(ms): {direct_breakdown['inference']:.3f}")
+    print(f"  postprocess/NMS latency(ms): {direct_breakdown['postprocess']:.3f}")
+    print(f"  total measured latency(ms): {direct_breakdown['total']:.3f}")
 
 
 if __name__ == "__main__":
