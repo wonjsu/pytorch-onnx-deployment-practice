@@ -146,6 +146,14 @@ Object detection에서는 bbox 위치가 얼마나 겹치는지 비교하기 위
 
 이 스크립트에서 PyTorch 결과와 ONNX 결과가 서로 비슷하다면 ONNX 변환은 대체로 정상이고, 차이는 직접 구현한 postprocess 경로에서 발생했을 가능성이 큽니다. 반대로 Ultralytics API만 사용해도 PyTorch 결과와 ONNX 결과가 크게 다르다면 exported ONNX 모델 또는 변환 설정을 먼저 확인해야 합니다.
 
+### 최근 detection consistency 결과
+
+| Image | Class | PyTorch Confidence | ONNX Confidence | Confidence Diff | BBox IoU |
+|---|---|---:|---:|---:|---:|
+| test_mouse.jpg | toilet | 0.5338 | 0.5898 | 0.0560 | 0.9959 |
+
+같은 Ultralytics pipeline 기준으로 PyTorch와 ONNX가 거의 동일한 bbox를 출력했으므로, ONNX 변환 후 detection behavior가 잘 유지된 것으로 해석할 수 있습니다.
+
 ## YOLO latency benchmark
 
 `benchmark_yolo.py`는 같은 입력 이미지에 대해 YOLOv8n PyTorch/Ultralytics 경로와 ONNX Runtime 경로의 latency를 비교합니다. 이미지 경로는 positional argument로 전달하며, 기본 ONNX 모델 경로는 `examples/yolo_onnx/artifacts/yolov8n.onnx`입니다. Ultralytics PyTorch 모델은 `YOLO("yolov8n.pt")`를 사용하고, direct ONNX Runtime 측정은 `CPUExecutionProvider`를 사용합니다.
@@ -187,6 +195,28 @@ Direct ONNX Runtime end-to-end latency(ms): ...
 ```
 
 YOLO benchmark에서는 모델 forward 시간만 보면 실제 사용자가 체감하는 latency를 과소평가할 수 있습니다. ResNet classification 모델은 보통 하나의 class logits/probability를 얻는 흐름이 핵심이지만, YOLO 같은 detection 모델은 bbox decode, confidence threshold, class 선택, NMS 같은 후처리 비용이 최종 detection 생성에 포함됩니다. 따라서 inference-only latency와 함께 전처리, 후처리, NMS까지 포함한 end-to-end latency도 함께 확인해야 합니다.
+
+### 최근 latency benchmark 결과
+
+| 측정 경로 | Latency (ms) |
+|---|---:|
+| Ultralytics PyTorch end-to-end | 223.079 |
+| Ultralytics ONNX end-to-end | 227.272 |
+| Direct ONNX Runtime inference-only | 74.545 |
+| Direct ONNX Runtime postprocess/NMS | 2.447 |
+| Direct ONNX Runtime end-to-end | 215.896 |
+
+#### Direct ONNX Runtime breakdown
+
+| 단계 | Latency (ms) |
+|---|---:|
+| image load | 100.159 |
+| letterbox preprocess | 46.495 |
+| session.run inference | 66.810 |
+| postprocess/NMS | 2.263 |
+| total measured latency | 215.896 |
+
+현재 CPU 환경에서는 Ultralytics pipeline 기준 ONNX가 PyTorch보다 뚜렷하게 빠르지 않았습니다. Direct ONNX Runtime에서는 image load와 letterbox preprocess가 전체 latency의 큰 비중을 차지했습니다. ONNX는 속도 향상을 보장하는 기술이 아니라, 모델을 다른 runtime에서 실행할 수 있게 하는 중간 포맷이며 실제 성능은 runtime/backend, graph structure, preprocessing pipeline에 따라 달라집니다.
 
 ## 생성되는 ONNX 파일
 

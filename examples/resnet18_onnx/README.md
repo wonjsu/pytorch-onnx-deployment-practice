@@ -63,6 +63,17 @@ np.allclose(rtol=1e-03, atol=1e-05): True
 
 `max abs diff`와 `mean abs diff`는 두 출력 사이의 절대 오차를 나타냅니다. ONNX 변환 과정에서 부동소수점 연산 순서가 조금 달라질 수 있으므로 아주 작은 차이는 정상입니다.
 
+### 최근 output consistency 결과
+
+| 항목 | 결과 |
+|---|---:|
+| PyTorch output shape | `(1, 1000)` |
+| ONNX Runtime output shape | `(1, 1000)` |
+| Max abs diff | 0.00000405 |
+| Mean abs diff | 0.00000088 |
+| `np.allclose(rtol=1e-03, atol=1e-05)` | True |
+
+PyTorch와 ONNX Runtime output shape이 동일하고, 설정한 허용 오차 기준에서 `allclose=True`로 확인되어 ONNX 변환 후 출력 일관성이 유지되었습니다.
 
 ## 3. 실제 이미지 입력에서 PyTorch vs ONNX Runtime logits 일관성 확인
 
