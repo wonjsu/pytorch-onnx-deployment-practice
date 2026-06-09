@@ -220,3 +220,7 @@ examples/resnet18_onnx/artifacts/
 
 # Generated ONNX artifacts
 examples/yolo_onnx/artifacts/
+.venv-resnet/
+.venv-yolo/
+assets/
+yolov8n.pt
