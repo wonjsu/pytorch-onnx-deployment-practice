@@ -220,15 +220,19 @@ YOLO benchmark에서는 모델 forward 시간만 보면 실제 사용자가 체�
 
 ## TensorRT FP32/FP16 Benchmark
 
-The YOLOv8n ONNX model was converted into TensorRT engines, and engine-level inference latency was measured with FP32 and FP16 precision. Since TensorRT engine files are hardware- and TensorRT-version-dependent artifacts, this repository documents the build commands and benchmark results rather than storing the generated engine files.
+YOLOv8n ONNX 모델을 TensorRT FP32/FP16 engine으로 build하고, `trtexec` 기준 engine-level inference latency를 측정했습니다. TensorRT engine 파일은 GPU architecture, TensorRT version, CUDA/driver 환경에 영향을 받는 hardware/version-dependent artifact이므로 GitHub에는 올리지 않습니다. 이 repository에는 재현에 필요한 build command와 benchmark 결과만 문서화합니다.
 
-| Item | Value |
+### 환경
+
+| 항목 | 값 |
 |---|---|
 | TensorRT | 8.6.1 |
 | GPU | NVIDIA GeForce GTX 1080 Ti |
 | Compute Capability | 6.1 |
 | ONNX input | `images`, shape `1x3x640x640` |
 | ONNX output | `output0`, shape `1x84x8400` |
+
+### Engine build command
 
 FP32 engine build command:
 
@@ -247,20 +251,26 @@ trtexec ^
   --fp16
 ```
 
-The exported ONNX model uses a static input shape of 1x3x640x640, so the `--shapes` option was not used.
-The FP16 engine was built by adding the `--fp16` option.
-INT8 was not tested in this step because it requires a representative calibration dataset.
+`--shapes` 옵션은 사용하지 않았습니다. 이 ONNX 모델은 static input shape `1x3x640x640`을 이미 가지고 있으므로, 별도의 dynamic shape 지정이 필요하지 않았습니다. FP16 engine은 FP32 build command에 `--fp16` 옵션만 추가해서 생성했습니다.
+
+### Benchmark 결과
 
 | Precision | Latency mean (ms) | GPU compute mean (ms) | H2D mean (ms) | D2H mean (ms) |
 |---|---:|---:|---:|---:|
 | FP32 | 3.3065 | 2.7088 | 0.3790 | 0.2187 |
 | FP16 | 3.3683 | 2.7702 | 0.3791 | 0.2190 |
 
-TensorRT FP32 and FP16 engines were successfully built from the YOLOv8n ONNX model. On GTX 1080 Ti, FP16 did not provide a speedup over FP32 in this benchmark. This result is consistent with the hardware limitation of GTX 1080 Ti, which is a Pascal GPU without Tensor Cores. TensorRT GPU inference was much faster than the previous ONNX Runtime CPU inference-only measurement, but this comparison uses different hardware backends.
+### 해석
 
-The TensorRT benchmark was measured using `trtexec`, which uses generated input tensors by default. Therefore, the reported numbers represent engine-level inference latency, not full image end-to-end latency or detection accuracy on real images.
+- TensorRT FP32/FP16 engine build와 benchmark는 모두 성공했습니다.
+- GTX 1080 Ti 환경에서는 FP16이 FP32보다 빠르지 않았습니다.
+- 이는 GTX 1080 Ti가 Tensor Core가 없는 Pascal GPU이기 때문에 FP16 가속 이점이 제한적일 수 있음을 보여줍니다.
+- 이전 ONNX Runtime CPU inference-only 결과와 비교하면 TensorRT GPU inference는 훨씬 빠르지만, 이 비교는 CPU backend와 GPU backend를 비교한 것이므로 같은 runtime/backend 조건의 비교로 해석하면 안 됩니다.
+- INT8은 representative calibration dataset과 별도 accuracy validation이 필요하므로 이번 실험 범위에서는 제외했습니다.
 
-Detection consistency between TensorRT outputs and PyTorch/ONNX outputs was not evaluated in this step. That would require running the TensorRT engine with the same image preprocessing and YOLO postprocessing pipeline.
+TensorRT benchmark는 `trtexec` 기준 측정이며, 기본적으로 generated input tensor를 사용합니다. 따라서 위 숫자는 engine-level inference latency를 의미하고, 실제 이미지 로딩부터 detection 결과 생성까지의 end-to-end latency나 실제 이미지 기준 accuracy를 의미하지 않습니다.
+
+이번 단계에서는 TensorRT output과 PyTorch/ONNX Runtime output의 detection consistency를 별도로 평가하지 않았습니다. 이 검증을 하려면 같은 이미지 preprocessing과 YOLO postprocessing pipeline으로 TensorRT engine output을 비교해야 합니다.
 
 ## 생성되는 ONNX 파일
 
@@ -270,4 +280,4 @@ export가 끝나면 다음 경로에 ONNX 파일이 생성됩니다.
 examples/yolo_onnx/artifacts/yolov8n.onnx
 ```
 
-`examples/yolo_onnx/artifacts/` 디렉터리는 실행 시 생성되는 artifact 저장 위치입니다. ONNX 파일은 실행 결과물이며 크기가 클 수 있으므로 Git에는 포함하지 않습니다.
+`examples/yolo_onnx/artifacts/` 디렉터리는 실행 시 생성되는 artifact 저장 위치입니다. ONNX 파일과 TensorRT engine 파일은 실행 결과물이며 환경에 따라 달라질 수 있으므로 Git에는 포함하지 않습니다.
