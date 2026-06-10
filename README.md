@@ -1,6 +1,6 @@
 # pytorch-onnx-deployment-practice
 
-PyTorch vision model을 ONNX로 export하고, ONNX Runtime/TensorRT에서 **inference consistency**와 **latency**를 비교하는 deployment workflow practice repository입니다.
+PyTorch 기반 vision model을 ONNX로 변환한 뒤, ONNX Runtime과 TensorRT에서 출력 일관성과 추론 시간을 비교하는 실습 repository입니다.
 
 이 프로젝트는 단순히 ONNX 파일을 생성하는 데서 끝나지 않고, 모델 종류에 따라 변환 후 확인해야 하는 지점이 어떻게 달라지는지 정리합니다. Classification 모델인 **ResNet18**과 detection 모델인 **YOLOv8n**을 함께 다루며, output consistency, preprocessing/postprocessing, end-to-end latency, TensorRT engine benchmark까지 단계적으로 확인합니다.
 
@@ -43,6 +43,8 @@ PyTorch vision model을 ONNX로 export하고, ONNX Runtime/TensorRT에서 **infe
 - 이 결과는 GTX 1080 Ti가 Tensor Core가 없는 Pascal GPU라는 특성과 연결해 해석할 수 있으며, FP16 사용이 항상 latency 개선으로 이어지지는 않음을 보여줍니다.
 
 ## 실행 흐름
+
+예제 명령의 `assets/test_mouse.jpg`는 로컬 테스트 이미지 예시이며, 사용자는 자신의 이미지 경로로 바꿔 실행할 수 있습니다.
 
 ### 1. Dependency 설치
 
