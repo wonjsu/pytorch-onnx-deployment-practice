@@ -191,7 +191,7 @@ def collect_ultralytics_detections(
     """Run Ultralytics prediction and return detections."""
     from ultralytics import YOLO
 
-    model = YOLO(str(model_path))
+    model = YOLO(str(model_path), task="detect")
     results = model.predict(
         source=str(image_path),
         conf=conf_threshold,
