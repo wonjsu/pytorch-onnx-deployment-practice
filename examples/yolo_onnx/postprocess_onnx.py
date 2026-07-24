@@ -145,7 +145,16 @@ def letterbox_preprocess_image(
     if not image_path.exists():
         raise FileNotFoundError(f"Image file not found: {image_path}")
 
-    image = Image.open(image_path).convert("RGB")
+    with Image.open(image_path) as source:
+        image = source.convert("RGB")
+    return letterbox_preprocess(image)
+
+
+def letterbox_preprocess(
+    image: Image.Image,
+) -> tuple[np.ndarray, tuple[int, int], float, int, int]:
+    """Letterbox an already-loaded RGB image to a YOLOv8n NCHW tensor."""
+    image = image.convert("RGB")
     original_size = image.size
     original_width, original_height = original_size
     target_width, target_height = INPUT_SIZE

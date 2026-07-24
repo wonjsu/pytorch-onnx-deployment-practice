@@ -224,3 +224,12 @@ examples/yolo_onnx/artifacts/
 .venv-yolo/
 assets/
 yolov8n.pt
+
+# TensorRT and dataset/benchmark artifacts
+*.onnx
+*.engine
+*.plan
+*.cache
+datasets/
+benchmark-results/
+examples/yolo_tensorrt/artifacts/
