@@ -17,6 +17,7 @@ PyTorch 기반 vision model을 ONNX로 변환한 뒤, ONNX Runtime과 TensorRT�
 |---|---|
 | `examples/resnet18_onnx` | ResNet18 PyTorch → ONNX export, PyTorch vs ONNX Runtime output consistency 확인, inference-only/end-to-end latency benchmark |
 | `examples/yolo_onnx` | YOLOv8n PyTorch → ONNX export, raw output shape 확인, letterbox preprocessing, bbox postprocessing, NMS, PyTorch vs ONNX detection comparison, latency benchmark, TensorRT FP32/FP16 benchmark |
+| `examples/yolo_tensorrt` | TensorRT Python API 실제 이미지 추론, PyTorch/ORT/TensorRT output 검증, 구간별 benchmark |
 | `requirements.txt` | 예제 실행에 필요한 Python dependency 목록 |
 
 ## 핵심 결과 요약
@@ -74,6 +75,46 @@ python examples/yolo_onnx/benchmark_yolo.py assets/test_mouse.jpg
 ```
 
 YOLOv8n의 raw output 해석, letterbox preprocessing, NMS, PyTorch vs ONNX comparison, TensorRT benchmark는 `examples/yolo_onnx/README.md`에 정리되어 있습니다.
+
+### 4. YOLOv8n TensorRT 실제 추론 및 검증
+
+TensorRT는 target NVIDIA 환경에 맞춰 별도로 설치해야 하며 버전을 임의로 고정하지 않습니다.
+
+```bash
+pip install -r requirements-tensorrt.txt
+python examples/yolo_tensorrt/environment_report.py
+python examples/yolo_tensorrt/infer_tensorrt.py assets/test_mouse.jpg --engine-path examples/yolo_tensorrt/artifacts/yolov8n-fp32.engine
+python examples/yolo_tensorrt/compare_backends.py assets/test_mouse.jpg --onnx-path examples/yolo_onnx/artifacts/yolov8n.onnx --engine-path examples/yolo_tensorrt/artifacts/yolov8n-fp32.engine
+python examples/yolo_tensorrt/benchmark_tensorrt.py assets/test_mouse.jpg --engine-path examples/yolo_tensorrt/artifacts/yolov8n-fp32.engine --warmup 10 --runs 100 --json benchmark-results/result.json --csv benchmark-results/result.csv
+```
+
+세 backend 비교는 Ultralytics의 고수준 `predict()`를 호출하지 않습니다. 한 번 직접 만든 letterbox NCHW tensor를 PyTorch raw model, ONNX Runtime CUDA provider, TensorRT에 그대로 입력하고, 세 raw output 모두 기존 `postprocess_output`으로 처리합니다.
+
+#### Engine build와 layer profiling
+
+```bash
+# FP32 (TensorRT 기본값은 TF32를 허용할 수 있음)
+trtexec --onnx=examples/yolo_onnx/artifacts/yolov8n.onnx --saveEngine=examples/yolo_tensorrt/artifacts/yolov8n-fp32.engine
+# FP16
+trtexec --onnx=examples/yolo_onnx/artifacts/yolov8n.onnx --fp16 --saveEngine=examples/yolo_tensorrt/artifacts/yolov8n-fp16.engine
+# 상세 layer 정보 JSON (TensorRT 8.x/10.x)
+trtexec --loadEngine=examples/yolo_tensorrt/artifacts/yolov8n-fp32.engine --profilingVerbosity=detailed --dumpLayerInfo --exportLayerInfo=benchmark-results/layers.json
+# per-layer 실행 profile 및 JSON
+trtexec --loadEngine=examples/yolo_tensorrt/artifacts/yolov8n-fp32.engine --profilingVerbosity=detailed --dumpProfile --exportProfile=benchmark-results/profile.json
+```
+
+`--profilingVerbosity=detailed`, `--dumpLayerInfo`, `--exportLayerInfo`, `--dumpProfile`, `--exportProfile`의 지원 여부와 철자는 설치된 `trtexec --help`에서 확인해야 합니다. 구형 TensorRT 8.x 배포판 일부에는 JSON export 옵션이 없으므로 `--dumpLayerInfo`/`--dumpProfile` 표준 출력만 저장하십시오. TensorRT 10.x에서는 위 옵션을 사용할 수 있습니다.
+
+TensorRT의 “FP32” build는 NVIDIA에서 허용한 TF32 tactic을 선택할 수 있으므로 strict IEEE FP32 baseline과 같지 않을 수 있습니다. **먼저 `environment_report.py`로 실제 TensorRT 버전을 확인**하십시오. TensorRT 8.x의 `trtexec`에서는 `--noTF32`로 strict baseline을 만들 수 있습니다. TensorRT 10.x에서는 배포판별 CLI 변경 가능성이 있으므로 `trtexec --help | grep -i tf32`로 지원 옵션을 확인하고, 옵션이 없으면 Python builder의 `BuilderFlag.TF32`를 clear한 별도 build가 필요합니다. 이 저장소의 현재 CPU 환경에는 TensorRT가 없어 특정 target 버전용 명령을 단정하지 않습니다.
+
+#### 결과 기록 template (측정값을 직접 입력)
+
+| GPU / TRT | Precision | TF32 | Engine-only mean/p95 (ms) | E2E mean/p95 (ms) | Raw MAE/max | Matched/unmatched |
+|---|---|---|---|---|---|---|
+| RTX 3060 Laptop / ___ | FP32 | on/off | ___ / ___ | ___ / ___ | ___ / ___ | ___ / ___ |
+| RTX 3060 Laptop / ___ | FP16 | n/a | ___ / ___ | ___ / ___ | ___ / ___ | ___ / ___ |
+
+`benchmark_tensorrt.py`는 CUDA event로 H2D, enqueue/GPU compute, D2H를 재고 `perf_counter`로 CPU 구간과 end-to-end를 잽니다. `loaded_image_reuse`와 매 iteration 파일을 여는 `reopen_each_iteration` 결과를 분리합니다. 이는 backend consistency 검증이며 ground-truth dataset mAP를 대신하지 않습니다.
 
 ## Artifacts 및 local files
 
