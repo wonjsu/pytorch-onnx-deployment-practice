@@ -231,5 +231,7 @@ yolov8n.pt
 *.plan
 *.cache
 datasets/
+input/coco/
 benchmark-results/
+*predictions*.json
 examples/yolo_tensorrt/artifacts/
