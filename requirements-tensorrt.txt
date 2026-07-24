@@ -1,0 +1,5 @@
+# Optional target-machine dependencies. Install versions compatible with the
+# locally installed NVIDIA driver/CUDA/TensorRT stack; no versions are pinned.
+tensorrt
+cuda-python
+onnxruntime-gpu
