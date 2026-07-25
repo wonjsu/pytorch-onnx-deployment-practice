@@ -52,6 +52,10 @@ class TensorRTRunner:
             raise RuntimeError(f"TensorRT 11.1.0.106 is required, found {self.trt.__version__}")
         if not self.torch.cuda.is_available():
             raise RuntimeError("CUDA is unavailable; TensorRT has no fallback backend")
+        self.stream = self.torch.cuda.Stream()
+        self.timing_events = tuple(
+            self.torch.cuda.Event(enable_timing=True) for _ in range(4)
+        )
         self.logger = self.trt.Logger(self.trt.Logger.WARNING)
         self.runtime = self.trt.Runtime(self.logger)
         self.engine = self.runtime.deserialize_cuda_engine(engine_path.read_bytes())
@@ -90,24 +94,24 @@ class TensorRTRunner:
             raise ValueError("Engine has no output tensors")
 
     def infer_outputs_timed(self, input_array: np.ndarray) -> tuple[dict[str, np.ndarray], dict[str, float]]:
-        """Execute H2D, compute and D2H on the current PyTorch stream with events."""
+        """Execute H2D, compute and D2H on the runner's dedicated CUDA stream."""
         expected = self.metadata[self.input_name]["shape"]
         if input_array.shape != expected:
             raise ValueError(f"Input shape mismatch: expected {expected}, got {input_array.shape}")
         if input_array.dtype != np.float32:
             raise TypeError(f"Input dtype mismatch: expected float32, got {input_array.dtype}")
         cpu_input = self.torch.from_numpy(np.ascontiguousarray(input_array))
-        stream = self.torch.cuda.current_stream()
-        events = [self.torch.cuda.Event(enable_timing=True) for _ in range(4)]
-        events[0].record(stream)
-        self.device_buffers[self.input_name].copy_(cpu_input, non_blocking=True)
-        events[1].record(stream)
-        if not self.context.execute_async_v3(stream_handle=stream.cuda_stream):
-            raise RuntimeError("TensorRT execute_async_v3 failed")
-        events[2].record(stream)
-        for name in self.output_names:
-            self.host_buffers[name].copy_(self.device_buffers[name], non_blocking=True)
-        events[3].record(stream)
+        events = self.timing_events
+        with self.torch.cuda.stream(self.stream):
+            events[0].record(self.stream)
+            self.device_buffers[self.input_name].copy_(cpu_input, non_blocking=True)
+            events[1].record(self.stream)
+            if not self.context.execute_async_v3(stream_handle=self.stream.cuda_stream):
+                raise RuntimeError("TensorRT execute_async_v3 failed")
+            events[2].record(self.stream)
+            for name in self.output_names:
+                self.host_buffers[name].copy_(self.device_buffers[name], non_blocking=True)
+            events[3].record(self.stream)
         events[3].synchronize()
         timings = {
             "h2d_ms": events[0].elapsed_time(events[1]),

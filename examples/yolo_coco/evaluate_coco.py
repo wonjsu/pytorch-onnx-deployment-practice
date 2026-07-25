@@ -72,6 +72,19 @@ class Timings:
             return self.tensorrt_total
         return self.preprocess + self.inference + self.postprocess
 
+    @property
+    def other_overhead(self) -> float:
+        """Return unclassified TensorRT wall-clock time, excluding rounding noise."""
+        return max(
+            0.0,
+            self.total
+            - self.preprocess
+            - self.h2d
+            - self.tensorrt_compute
+            - self.d2h
+            - self.postprocess,
+        )
+
 
 def yolo_class_to_coco_category_id(class_index: int) -> int:
     """Map a contiguous YOLO class index to the sparse official COCO ID."""
@@ -245,6 +258,7 @@ def print_timings(timings: Timings, count: int, initialization: float, warmup: f
         print(f"H2D time: {timings.h2d:.3f} s")
         print(f"TensorRT compute time: {timings.tensorrt_compute:.3f} s")
         print(f"D2H time: {timings.d2h:.3f} s")
+        print(f"Other overhead: {timings.other_overhead:.3f} s")
     else:
         print(f"Inference time: {timings.inference:.3f} s")
     print(f"Postprocessing time: {timings.postprocess:.3f} s")
