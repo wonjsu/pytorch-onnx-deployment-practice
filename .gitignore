@@ -235,3 +235,8 @@ input/coco/
 benchmark-results/
 *predictions*.json
 examples/yolo_tensorrt/artifacts/
+*.engine.json
+*.plan.json
+*.timing
+*.timing.cache
+*.profile.json

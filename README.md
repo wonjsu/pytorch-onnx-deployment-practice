@@ -76,45 +76,9 @@ python examples/yolo_onnx/benchmark_yolo.py assets/test_mouse.jpg
 
 YOLOv8n의 raw output 해석, letterbox preprocessing, NMS, PyTorch vs ONNX comparison, TensorRT benchmark는 `examples/yolo_onnx/README.md`에 정리되어 있습니다.
 
-### 4. YOLOv8n TensorRT 실제 추론 및 검증
+### 4. YOLOv8n TensorRT 11.1 실제 추론 및 검증
 
-TensorRT는 target NVIDIA 환경에 맞춰 별도로 설치해야 하며 버전을 임의로 고정하지 않습니다.
-
-```bash
-pip install -r requirements-tensorrt.txt
-python examples/yolo_tensorrt/environment_report.py
-python examples/yolo_tensorrt/infer_tensorrt.py assets/test_mouse.jpg --engine-path examples/yolo_tensorrt/artifacts/yolov8n-fp32.engine
-python examples/yolo_tensorrt/compare_backends.py assets/test_mouse.jpg --onnx-path examples/yolo_onnx/artifacts/yolov8n.onnx --engine-path examples/yolo_tensorrt/artifacts/yolov8n-fp32.engine
-python examples/yolo_tensorrt/benchmark_tensorrt.py assets/test_mouse.jpg --engine-path examples/yolo_tensorrt/artifacts/yolov8n-fp32.engine --warmup 10 --runs 100 --json benchmark-results/result.json --csv benchmark-results/result.csv
-```
-
-세 backend 비교는 Ultralytics의 고수준 `predict()`를 호출하지 않습니다. 한 번 직접 만든 letterbox NCHW tensor를 PyTorch raw model, ONNX Runtime CUDA provider, TensorRT에 그대로 입력하고, 세 raw output 모두 기존 `postprocess_output`으로 처리합니다.
-
-#### Engine build와 layer profiling
-
-```bash
-# FP32 (TensorRT 기본값은 TF32를 허용할 수 있음)
-trtexec --onnx=examples/yolo_onnx/artifacts/yolov8n.onnx --saveEngine=examples/yolo_tensorrt/artifacts/yolov8n-fp32.engine
-# FP16
-trtexec --onnx=examples/yolo_onnx/artifacts/yolov8n.onnx --fp16 --saveEngine=examples/yolo_tensorrt/artifacts/yolov8n-fp16.engine
-# 상세 layer 정보 JSON (TensorRT 8.x/10.x)
-trtexec --loadEngine=examples/yolo_tensorrt/artifacts/yolov8n-fp32.engine --profilingVerbosity=detailed --dumpLayerInfo --exportLayerInfo=benchmark-results/layers.json
-# per-layer 실행 profile 및 JSON
-trtexec --loadEngine=examples/yolo_tensorrt/artifacts/yolov8n-fp32.engine --profilingVerbosity=detailed --dumpProfile --exportProfile=benchmark-results/profile.json
-```
-
-`--profilingVerbosity=detailed`, `--dumpLayerInfo`, `--exportLayerInfo`, `--dumpProfile`, `--exportProfile`의 지원 여부와 철자는 설치된 `trtexec --help`에서 확인해야 합니다. 구형 TensorRT 8.x 배포판 일부에는 JSON export 옵션이 없으므로 `--dumpLayerInfo`/`--dumpProfile` 표준 출력만 저장하십시오. TensorRT 10.x에서는 위 옵션을 사용할 수 있습니다.
-
-TensorRT의 “FP32” build는 NVIDIA에서 허용한 TF32 tactic을 선택할 수 있으므로 strict IEEE FP32 baseline과 같지 않을 수 있습니다. **먼저 `environment_report.py`로 실제 TensorRT 버전을 확인**하십시오. TensorRT 8.x의 `trtexec`에서는 `--noTF32`로 strict baseline을 만들 수 있습니다. TensorRT 10.x에서는 배포판별 CLI 변경 가능성이 있으므로 `trtexec --help | grep -i tf32`로 지원 옵션을 확인하고, 옵션이 없으면 Python builder의 `BuilderFlag.TF32`를 clear한 별도 build가 필요합니다. 이 저장소의 현재 CPU 환경에는 TensorRT가 없어 특정 target 버전용 명령을 단정하지 않습니다.
-
-#### 결과 기록 template (측정값을 직접 입력)
-
-| GPU / TRT | Precision | TF32 | Engine-only mean/p95 (ms) | E2E mean/p95 (ms) | Raw MAE/max | Matched/unmatched |
-|---|---|---|---|---|---|---|
-| RTX 3060 Laptop / ___ | FP32 | on/off | ___ / ___ | ___ / ___ | ___ / ___ | ___ / ___ |
-| RTX 3060 Laptop / ___ | FP16 | n/a | ___ / ___ | ___ / ___ | ___ / ___ | ___ / ___ |
-
-`benchmark_tensorrt.py`는 CUDA event로 H2D, enqueue/GPU compute, D2H를 재고 `perf_counter`로 CPU 구간과 end-to-end를 잽니다. `loaded_image_reuse`와 매 iteration 파일을 여는 `reopen_each_iteration` 결과를 분리합니다. 이는 backend consistency 검증이며 ground-truth dataset mAP를 대신하지 않습니다.
+이 repository의 현재 TensorRT 구현은 아래의 **TensorRT 11.1 FP32 전용 workflow**를 사용합니다. 이전 TensorRT 세대의 binding API나 FP16/INT8 engine은 이 작업 범위에 포함하지 않습니다.
 
 ## Artifacts 및 local files
 
@@ -134,3 +98,45 @@ TensorRT의 “FP32” build는 NVIDIA에서 허용한 TF32 tactic을 선택할 
 - Inference-only benchmark와 end-to-end benchmark는 측정 범위가 다릅니다. Deployment workflow에서는 모델 forward 시간뿐 아니라 image loading, preprocessing, postprocessing, NMS 비용도 함께 확인해야 합니다.
 - CPU backend와 GPU backend 결과는 같은 기준의 숫자로 단순 비교하기 어렵습니다. TensorRT 결과는 ONNX Runtime CPU 결과보다 빠르지만, backend와 hardware가 다르다는 점을 명시적으로 구분해야 합니다.
 - INT8 TensorRT 실험은 calibration dataset과 별도 accuracy validation이 필요하므로 이번 practice 범위에서는 제외했습니다.
+
+## TensorRT 11.1 FP32 전용 workflow
+
+이 구현은 **TensorRT 11.1.0.106만** 대상으로 하며, FP32 ONNX의 정적 입력 `(1, 3, 640, 640)`만 지원합니다. TensorRT 11의 기본 strongly typed network를 그대로 생성하고 FP16, INT8, calibration, Q/DQ 및 Model Optimizer는 사용하지 않습니다. `strict FP32` build는 `BuilderFlag.TF32`를 명시적으로 clear하고, `FP32 with TF32 allowed` build는 FP32 tensor dtype을 유지한 채 해당 flag를 set하여 TF32 tactic 선택만 허용합니다.
+
+TensorRT engine은 GPU, TensorRT, CUDA/driver 환경에 의존하는 binary입니다. 아래 engine은 **실행 대상 RTX 3060 Laptop GPU에서 직접 생성**해야 하고 Git에 commit하지 않습니다. 다른 GPU 또는 TensorRT 버전에서는 재빌드가 필요할 수 있습니다. 각 build는 ONNX SHA-256, 상대 artifact 경로, 환경, TF32 설정 및 I/O metadata를 `<engine>.json`에 함께 기록합니다.
+
+Windows CMD에서 repository root와 활성화된 Python 3.11 virtual environment를 기준으로 실행합니다.
+
+```bat
+REM TensorRT 11.1.0.106 target dependencies
+pip install -r requirements-tensorrt.txt
+
+REM strict FP32: TF32 explicitly disabled
+python examples\yolo_tensorrt\build_engine.py --onnx-path examples\yolo_onnx\artifacts\yolov8n.onnx --engine-path examples\yolo_tensorrt\artifacts\yolov8n_fp32_strict.engine --workspace-gb 1 --tf32 off
+
+REM FP32 tensors with TF32 tactics allowed
+python examples\yolo_tensorrt\build_engine.py --onnx-path examples\yolo_onnx\artifacts\yolov8n.onnx --engine-path examples\yolo_tensorrt\artifacts\yolov8n_fp32_tf32.engine --workspace-gb 1 --tf32 on
+
+REM one-image ONNX Runtime CUDA versus strict TensorRT comparison
+python examples\yolo_tensorrt\compare_onnx_tensorrt.py --image-path assets\test_mouse.jpg --onnx-path examples\yolo_onnx\artifacts\yolov8n.onnx --engine-path examples\yolo_tensorrt\artifacts\yolov8n_fp32_strict.engine
+
+REM strict FP32 COCO smoke evaluation (10 images)
+python examples\yolo_coco\evaluate_coco.py --backend tensorrt --engine-path examples\yolo_tensorrt\artifacts\yolov8n_fp32_strict.engine --limit 10 --output-json benchmark-results\coco_strict_10_predictions.json
+
+REM strict FP32 full COCO val2017 evaluation (5,000 images)
+python examples\yolo_coco\evaluate_coco.py --backend tensorrt --engine-path examples\yolo_tensorrt\artifacts\yolov8n_fp32_strict.engine --limit 5000 --output-json benchmark-results\coco_strict_5000_predictions.json
+
+REM TF32-allowed FP32 full COCO val2017 evaluation (5,000 images)
+python examples\yolo_coco\evaluate_coco.py --backend tensorrt --engine-path examples\yolo_tensorrt\artifacts\yolov8n_fp32_tf32.engine --limit 5000 --output-json benchmark-results\coco_tf32_5000_predictions.json
+```
+
+TensorRT 평가의 초기화(엔진 deserialize/context 생성)와 3회 warm-up은 평균에서 제외됩니다. CPU preprocessing, H2D, TensorRT compute, D2H, CPU postprocessing은 별도로 출력되며 GPU 세 구간은 PyTorch CUDA event로 측정합니다. H2D는 공유 NumPy FP32 전처리 결과를 재사용 CUDA input tensor로 복사하는 구간이고, D2H는 재사용 CUDA output tensor를 pinned CPU tensor로 복사하는 구간입니다.
+
+### 실제 결과 기록 template
+
+측정 전에는 숫자를 채우지 않습니다.
+
+| Engine | GPU / TensorRT | TF32 | Engine size | AP 0.50:0.95 | AP 0.50 | Avg total/image | H2D | Compute | D2H |
+|---|---|---|---|---|---|---|---|---|---|
+| `yolov8n_fp32_strict.engine` | ___ | disabled | ___ | ___ | ___ | ___ | ___ | ___ | ___ |
+| `yolov8n_fp32_tf32.engine` | ___ | allowed | ___ | ___ | ___ | ___ | ___ | ___ | ___ |

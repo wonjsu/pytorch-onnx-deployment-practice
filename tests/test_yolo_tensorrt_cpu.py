@@ -33,3 +33,46 @@ def test_detection_matching() -> None:
 
 def test_percentile() -> None:
     assert percentile([1, 2, 3, 4, 5], 95) == 4.8
+
+
+def test_tensorrt_dtype_mapping_without_tensorrt_install() -> None:
+    from types import SimpleNamespace
+    from examples.yolo_tensorrt.tensorrt_runner import trt_dtype_to_torch
+
+    fake_trt = SimpleNamespace(float32="f32", float16="f16", int8="i8", int32="i32", bool="bool")
+    fake_torch = SimpleNamespace(float32=1, float16=2, int8=3, int32=4, bool=5)
+    assert trt_dtype_to_torch(fake_trt.float32, fake_trt, fake_torch) == fake_torch.float32
+    assert trt_dtype_to_torch(fake_trt.float16, fake_trt, fake_torch) == fake_torch.float16
+    assert trt_dtype_to_torch(fake_trt.int8, fake_trt, fake_torch) == fake_torch.int8
+    assert trt_dtype_to_torch(fake_trt.int32, fake_trt, fake_torch) == fake_torch.int32
+    assert trt_dtype_to_torch(fake_trt.bool, fake_trt, fake_torch) == fake_torch.bool
+
+
+def test_build_cli_validation(tmp_path) -> None:
+    import pytest
+    from examples.yolo_tensorrt.build_engine import parse_args, positive_workspace_gb
+
+    onnx = tmp_path / "model.onnx"
+    onnx.write_bytes(b"onnx")
+    args = parse_args(["--onnx-path", str(onnx), "--engine-path", str(tmp_path / "model.engine"), "--tf32", "on"])
+    assert args.tf32 == "on" and args.workspace_gb == 1.0
+    with pytest.raises(SystemExit):
+        parse_args(["--onnx-path", str(onnx), "--engine-path", str(tmp_path / "model.engine"), "--tf32", "maybe"])
+    with pytest.raises(Exception):
+        positive_workspace_gb("0")
+
+
+def test_engine_path_and_static_metadata_validation(tmp_path) -> None:
+    import pytest
+    from examples.yolo_tensorrt.tensorrt_runner import validate_engine_path, validate_static_shape
+
+    engine = tmp_path / "valid.engine"
+    engine.write_bytes(b"engine")
+    assert validate_engine_path(engine) == engine
+    assert validate_static_shape([1, 3, 640, 640], "images") == (1, 3, 640, 640)
+    with pytest.raises(ValueError, match="non-static"):
+        validate_static_shape([1, 3, -1, -1], "images")
+    empty = tmp_path / "empty.engine"
+    empty.touch()
+    with pytest.raises(ValueError, match="empty"):
+        validate_engine_path(empty)

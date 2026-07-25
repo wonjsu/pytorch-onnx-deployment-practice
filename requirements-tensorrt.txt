@@ -1,5 +1,4 @@
-# Optional target-machine dependencies. Install versions compatible with the
-# locally installed NVIDIA driver/CUDA/TensorRT stack; no versions are pinned.
-tensorrt
-cuda-python
-onnxruntime-gpu
+# Install on the Windows target alongside its compatible NVIDIA driver/CUDA stack.
+tensorrt==11.1.0.106
+onnxruntime-gpu==1.26.0
+torch
