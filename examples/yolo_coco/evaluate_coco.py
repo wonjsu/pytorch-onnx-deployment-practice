@@ -1,4 +1,4 @@
-"""Evaluate YOLOv8n PyTorch CUDA or ONNX Runtime CUDA on COCO 2017.
+"""Evaluate YOLOv8n PyTorch, ONNX Runtime, or TensorRT CUDA on COCO 2017.
 
 Both backends execute the same raw model graph and deliberately share the
 letterbox and postprocessing implementation in ``yolo_onnx.postprocess_onnx``.
@@ -33,7 +33,9 @@ DEFAULT_IMAGES_DIR = Path("input/coco/images/val2017")
 DEFAULT_ANNOTATION_PATH = Path("input/coco/annotations/instances_val2017.json")
 DEFAULT_MODEL_PATH = Path("yolov8n.pt")
 DEFAULT_ONNX_PATH = Path("examples/yolo_onnx/artifacts/yolov8n.onnx")
+DEFAULT_ENGINE_PATH = Path("examples/yolo_tensorrt/artifacts/yolov8n_fp32_strict.engine")
 DEFAULT_OUTPUT_JSON = Path("benchmark-results/coco_predictions.json")
+TENSORRT_WARMUP_ITERATIONS = 3
 
 # Ultralytics' contiguous class indices correspond to these official COCO IDs.
 COCO_CATEGORY_IDS = (
@@ -58,10 +60,16 @@ class Timings:
 
     preprocess: float = 0.0
     inference: float = 0.0
+    h2d: float = 0.0
+    tensorrt_compute: float = 0.0
+    d2h: float = 0.0
     postprocess: float = 0.0
+    tensorrt_total: float = 0.0
 
     @property
     def total(self) -> float:
+        if self.tensorrt_total:
+            return self.tensorrt_total
         return self.preprocess + self.inference + self.postprocess
 
 
@@ -185,6 +193,24 @@ class OnnxRuntimeBackend:
         return self._run(input_tensor)
 
 
+class TensorRTBackend:
+    """TensorRT 11.1 FP32 backend without any fallback path."""
+
+    def __init__(self, engine_path: Path) -> None:
+        from examples.yolo_tensorrt.tensorrt_runner import TensorRTRunner
+
+        self.runner = TensorRTRunner(engine_path)
+
+    def warmup(self, input_tensor: np.ndarray) -> float:
+        return self.runner.warmup(input_tensor, TENSORRT_WARMUP_ITERATIONS)
+
+    def infer(self, input_tensor: np.ndarray) -> np.ndarray:
+        return self.runner.infer(input_tensor)
+
+    def infer_timed(self, input_tensor: np.ndarray) -> tuple[np.ndarray, dict[str, float]]:
+        return self.runner.infer_timed(input_tensor)
+
+
 def parse_args() -> argparse.Namespace:
     """Parse COCO benchmark arguments."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -192,7 +218,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--annotation-path", type=Path, default=DEFAULT_ANNOTATION_PATH)
     parser.add_argument("--model-path", type=Path, default=DEFAULT_MODEL_PATH)
     parser.add_argument("--onnx-path", type=Path, default=DEFAULT_ONNX_PATH)
-    parser.add_argument("--backend", choices=("pytorch", "onnxruntime"), required=True)
+    parser.add_argument("--engine-path", type=Path, default=DEFAULT_ENGINE_PATH)
+    parser.add_argument("--backend", choices=("pytorch", "onnxruntime", "tensorrt"), required=True)
     parser.add_argument("--limit", type=int)
     parser.add_argument("--conf-threshold", type=float, default=0.001)
     parser.add_argument("--iou-threshold", type=float, default=0.7)
@@ -207,14 +234,19 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def print_timings(timings: Timings, count: int, initialization: float, warmup: float) -> None:
+def print_timings(timings: Timings, count: int, initialization: float, warmup: float, tensorrt: bool = False) -> None:
     """Print initialization separately and benchmark timing totals."""
     print(f"Initialization time (excluded): {initialization:.3f} s")
     print(f"Warm-up time (excluded): {warmup:.3f} s")
     print(f"Total processing time: {timings.total:.3f} s")
     print(f"Average total time/image: {timings.total / count * 1000:.3f} ms")
     print(f"Preprocessing time: {timings.preprocess:.3f} s")
-    print(f"Inference time: {timings.inference:.3f} s")
+    if tensorrt:
+        print(f"H2D time: {timings.h2d:.3f} s")
+        print(f"TensorRT compute time: {timings.tensorrt_compute:.3f} s")
+        print(f"D2H time: {timings.d2h:.3f} s")
+    else:
+        print(f"Inference time: {timings.inference:.3f} s")
     print(f"Postprocessing time: {timings.postprocess:.3f} s")
 
 
@@ -238,8 +270,10 @@ def main() -> None:
     backend: Backend
     if args.backend == "pytorch":
         backend = PyTorchBackend(args.model_path)
-    else:
+    elif args.backend == "onnxruntime":
         backend = OnnxRuntimeBackend(args.onnx_path)
+    else:
+        backend = TensorRTBackend(args.engine_path)
     initialization = time.perf_counter() - initialization_start
 
     first_info = coco.loadImgs([image_ids[0]])[0]
@@ -250,6 +284,7 @@ def main() -> None:
     predictions: list[dict[str, int | float | list[float]]] = []
     progress_interval = max(1, min(100, len(image_ids) // 10))
     for position, image_id in enumerate(image_ids, start=1):
+        image_started = time.perf_counter()
         image_info = coco.loadImgs([image_id])[0]
         image_path = args.images_dir / image_info["file_name"]
 
@@ -257,9 +292,15 @@ def main() -> None:
         input_tensor, original_size, ratio, pad_x, pad_y = letterbox_preprocess_image(image_path)
         timings.preprocess += time.perf_counter() - start
 
-        start = time.perf_counter()
-        raw_output = backend.infer(input_tensor)
-        timings.inference += time.perf_counter() - start
+        if isinstance(backend, TensorRTBackend):
+            raw_output, gpu_timings = backend.infer_timed(input_tensor)
+            timings.h2d += gpu_timings["h2d_ms"] / 1000.0
+            timings.tensorrt_compute += gpu_timings["gpu_compute_ms"] / 1000.0
+            timings.d2h += gpu_timings["d2h_ms"] / 1000.0
+        else:
+            start = time.perf_counter()
+            raw_output = backend.infer(input_tensor)
+            timings.inference += time.perf_counter() - start
 
         start = time.perf_counter()
         classes, scores, boxes = postprocess_output(
@@ -270,14 +311,17 @@ def main() -> None:
             clipped = clip_xyxy(box, original_size[0], original_size[1])
             predictions.append(make_prediction(image_id, int(class_index), clipped, float(score)))
         timings.postprocess += time.perf_counter() - start
+        if isinstance(backend, TensorRTBackend):
+            timings.tensorrt_total += time.perf_counter() - image_started
 
         if position % progress_interval == 0 or position == len(image_ids):
             print(f"Processed {position}/{len(image_ids)} images")
 
     args.output_json.parent.mkdir(parents=True, exist_ok=True)
     args.output_json.write_text(json.dumps(predictions, ensure_ascii=False), encoding="utf-8")
-    print(f"Saved {len(predictions)} predictions to {args.output_json}")
-    print_timings(timings, len(image_ids), initialization, warmup)
+    print(f"Prediction count: {len(predictions)}")
+    print(f"Saved predictions to {args.output_json}")
+    print_timings(timings, len(image_ids), initialization, warmup, isinstance(backend, TensorRTBackend))
 
     # pycocotools.loadRes cannot consume an empty result list.
     if not predictions:
