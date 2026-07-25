@@ -76,8 +76,13 @@ class TensorRTRunner:
             shape = validate_static_shape(self.engine.get_tensor_shape(name), name)
             trt_dtype = self.engine.get_tensor_dtype(name)
             torch_dtype = trt_dtype_to_torch(trt_dtype, self.trt, self.torch)
+            # Engine precision is an implementation detail.  The benchmark contract,
+            # however, deliberately fixes the *external* tensors to FP32 for fair
+            # FP32/FP16/INT8 comparisons.
             if trt_dtype != self.trt.float32:
-                raise TypeError(f"FP32 engine expected, but tensor {name!r} is {trt_dtype}")
+                raise TypeError(
+                    f"External TensorRT I/O must be FP32; tensor {name!r} is {trt_dtype}"
+                )
             self.metadata[name] = {"mode": mode, "shape": shape, "trt_dtype": trt_dtype, "torch_dtype": torch_dtype}
             (self.input_names if mode == self.trt.TensorIOMode.INPUT else self.output_names).append(name)
             self.device_buffers[name] = self.torch.empty(shape, dtype=torch_dtype, device="cuda")

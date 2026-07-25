@@ -140,3 +140,33 @@ TensorRT 평가의 초기화(엔진 deserialize/context 생성)와 3회 warm-up�
 |---|---|---|---|---|---|---|---|---|---|
 | `yolov8n_fp32_strict.engine` | ___ | disabled | ___ | ___ | ___ | ___ | ___ | ___ | ___ |
 | `yolov8n_fp32_tf32.engine` | ___ | allowed | ___ | ___ | ___ | ___ | ___ | ___ | ___ |
+
+## TensorRT precision latency benchmark
+
+정확도와 latency는 분리해 평가합니다. 정확도는 기존
+`examples\yolo_coco\evaluate_coco.py`로 precision별 COCO 5,000장 full evaluation을
+한 번 수행하며(accuracy threshold `0.001/0.7`), latency 비교는 COCOeval/AP/예측 JSON을
+만들지 않는 `examples\yolo_benchmark\benchmark_precision.py`를 사용합니다. Latency의
+confidence/NMS threshold 기본값은 `0.25/0.45`입니다.
+
+Benchmark는 기본 4라운드 중 첫 1라운드를 warm-up 및 파일 캐시 형성 라운드로 raw
+결과에는 남기되 aggregate에서 제외합니다. 나머지 3라운드의 모든 sample을 합친
+mean/median/P95/표준편차와 라운드별 평균의 표준편차를 보고합니다. 보통 총 라운드는
+3~5 범위를 사용하십시오. 여러 engine은 매 라운드 `fp32 → fp16 → int8`, `fp16 →
+int8 → fp32`, `int8 → fp32 → fp16` 순으로 회전합니다.
+
+`engine` mode는 실제 COCO 이미지 한 장을 한 번 letterbox한 고정 입력으로 persistent
+buffer, non-default stream, 재사용 CUDA event의 H2D/compute/D2H를 측정합니다.
+`pipeline` mode는 매 이미지의 load/decode, CPU letterbox, H2D, compute, D2H, 실제
+confidence filtering/좌표 복원/class-aware NMS, 기타 Python overhead를 측정합니다.
+주 비교 지표는 파일 I/O를 제외한 pipeline이며 full end-to-end는 파일 캐시 영향을 받는
+보조 지표입니다.
+
+전체 5,000장 측정 전에 아래처럼 `--limit 100 --pipeline-rounds 2
+--discard-rounds 1`로 기능만 확인하십시오. 이 단축 실행 결과는 최종 성능 결과로
+사용하지 않습니다. 실제 latency 수치는 RTX 3060 Laptop GPU에서 사용자가 실행한 뒤
+기록합니다.
+
+```bat
+python examples\yolo_benchmark\benchmark_precision.py --mode pipeline --engine fp32=examples\yolo_tensorrt\artifacts\yolov8n_fp32_strict.engine --limit 100 --pipeline-rounds 2 --discard-rounds 1 --output-json benchmark-results\fp32_smoke.json --output-csv benchmark-results\fp32_smoke.csv
+```
