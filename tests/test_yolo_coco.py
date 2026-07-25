@@ -3,8 +3,10 @@
 import json
 
 import numpy as np
+import pytest
 
 from examples.yolo_coco.evaluate_coco import (
+    Timings,
     clip_xyxy,
     make_prediction,
     select_image_ids,
@@ -16,6 +18,20 @@ from examples.yolo_coco.evaluate_coco import (
 class FakeCOCO:
     def getImgIds(self) -> list[int]:
         return [42, 7, 100, 9]
+
+
+def test_tensorrt_other_overhead() -> None:
+    timings = Timings(
+        preprocess=1.0,
+        h2d=0.1,
+        tensorrt_compute=0.5,
+        d2h=0.1,
+        postprocess=0.2,
+        tensorrt_total=2.0,
+    )
+    assert timings.other_overhead == pytest.approx(0.1)
+    timings.tensorrt_total = 1.8
+    assert timings.other_overhead == 0.0
 
 
 def test_yolo_class_to_coco_category_mapping() -> None:
