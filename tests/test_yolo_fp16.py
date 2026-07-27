@@ -1,5 +1,7 @@
 """CPU-only tests for the mixed-FP16 workflow."""
 import json
+import subprocess
+import sys
 from pathlib import Path
 import numpy as np
 import onnx
@@ -9,6 +11,29 @@ from PIL import Image
 from examples.yolo_fp16.convert_fp16_modelopt import validate_paths
 from examples.yolo_fp16.generate_autocast_data import generate, select_images
 from examples.yolo_fp16.inspect_mixed_precision_onnx import inspect_model
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.parametrize('script_name', [
+ 'generate_autocast_data.py',
+ 'inspect_mixed_precision_onnx.py',
+ 'compare_fp32_fp16_onnx.py',
+ 'convert_fp16_modelopt.py',
+])
+def test_scripts_support_direct_help(script_name):
+ script=REPOSITORY_ROOT/'examples'/'yolo_fp16'/script_name
+ result=subprocess.run([sys.executable,str(script),'--help'],cwd=REPOSITORY_ROOT,check=False)
+ assert result.returncode==0
+
+
+def test_convert_script_supports_module_help():
+ result=subprocess.run(
+  [sys.executable,'-m','examples.yolo_fp16.convert_fp16_modelopt','--help'],
+  cwd=REPOSITORY_ROOT,
+  check=False,
+ )
+ assert result.returncode==0
 
 def model(path:Path,mixed=True,io_dtype=TensorProto.FLOAT):
  x=helper.make_tensor_value_info('images',io_dtype,[1,3,640,640]); y=helper.make_tensor_value_info('output0',io_dtype,[1,3,640,640]); nodes=[]; initializers=[]
