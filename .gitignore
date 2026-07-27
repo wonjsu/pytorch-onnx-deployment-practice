@@ -240,3 +240,10 @@ examples/yolo_tensorrt/artifacts/
 *.timing
 *.timing.cache
 *.profile.json
+
+# ModelOpt mixed-precision and inspector generated artifacts
+examples/yolo_fp16/artifacts/
+*.npz
+*.inspector.json
+*.conversion.json
+*.inspection.json

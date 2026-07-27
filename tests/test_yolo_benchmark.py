@@ -72,3 +72,12 @@ def test_nvidia_smi_na(monkeypatch) -> None:
     monkeypatch.setattr("subprocess.run", missing)
     state = query_gpu_state()
     assert state and set(state.values()) == {"N/A"}
+
+def test_throughput_console_unit(capsys) -> None:
+    from examples.yolo_benchmark.benchmark_precision import print_summary
+    stats={"all_iterations":{"mean":1.,"median":1.,"p95":1.},"round_means":{"standard_deviation":0.}}
+    aggregate={field:stats for field in ("h2d_ms","gpu_compute_ms","d2h_ms","gpu_total_ms","host_latency_ms","throughput_fps")}
+    print_summary("fp16","engine",aggregate)
+    output=capsys.readouterr().out
+    throughput_line=next(line for line in output.splitlines() if "throughput_fps:" in line)
+    assert "FPS" in throughput_line and " ms" not in throughput_line
