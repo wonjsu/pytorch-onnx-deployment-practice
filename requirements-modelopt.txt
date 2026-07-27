@@ -1,0 +1,4 @@
+nvidia-modelopt[onnx]
+onnx
+numpy
+pillow

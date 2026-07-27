@@ -210,8 +210,9 @@ def print_summary(label: str, mode: str, aggregate: dict) -> None:
     for field in fields:
         stats = aggregate[field]["all_iterations"]
         round_sd = aggregate[field]["round_means"]["standard_deviation"]
+        unit = "FPS" if field == "throughput_fps" else "ms"
         print(f"  {field}: mean={stats['mean']:.3f}, median={stats['median']:.3f}, "
-              f"P95={stats['p95']:.3f} ms; round-mean SD={round_sd:.3f} ms")
+              f"P95={stats['p95']:.3f} {unit}; round-mean SD={round_sd:.3f} {unit}")
     print(f"  FPS (mean reciprocal latency): {aggregate['throughput_fps']['all_iterations']['mean']:.3f}")
 
 

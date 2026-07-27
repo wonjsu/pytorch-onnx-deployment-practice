@@ -170,3 +170,60 @@ confidence filtering/좌표 복원/class-aware NMS, 기타 Python overhead를 �
 ```bat
 python examples\yolo_benchmark\benchmark_precision.py --mode pipeline --engine fp32=examples\yolo_tensorrt\artifacts\yolov8n_fp32_strict.engine --limit 100 --pipeline-rounds 2 --discard-rounds 1 --output-json benchmark-results\fp32_smoke.json --output-csv benchmark-results\fp32_smoke.csv
 ```
+
+## TensorRT 11.1 mixed-FP16 workflow (Windows CMD)
+
+The verified strict-FP32 baseline and empty FP16/INT8 comparison columns are recorded in [`docs/precision_benchmark_results.md`](docs/precision_benchmark_results.md). TensorRT 11.1 strongly typed networks do **not** use `BuilderFlag.FP16`: ModelOpt AutoCast first writes precision into a mixed FP32/FP16 ONNX graph, with FP32 external I/O retained. The builder's `--model-precision` is a validation/metadata label, not a precision flag. INT8 is not implemented.
+
+Keep ModelOpt isolated because installing it can alter ONNX/ORT packages in the working TensorRT environment. AutoCast defaults to CPU provider; this workflow makes no claim that the RTX 3060 is within ModelOpt for Windows' official GPU support. A failed import/conversion produces an explicit error and never silently falls back to blanket casting or renaming.
+
+```bat
+REM 1. Separate conversion environment
+py -3.11 -m venv .venv-modelopt
+.venv-modelopt\Scripts\activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements-modelopt.txt
+
+REM 2. Deterministic real-image AutoCast reference batches (not INT8 calibration)
+python examples\yolo_fp16\generate_autocast_data.py --onnx-path examples\yolo_onnx\artifacts\yolov8n.onnx --images-dir input\coco\images\val2017 --annotation-path input\coco\annotations\instances_val2017.json --output-dir examples\yolo_fp16\artifacts\autocast_data --count 32 --seed 0
+
+REM 3. ModelOpt AutoCast conversion (actual installed ModelOpt version is recorded)
+python examples\yolo_fp16\convert_fp16_modelopt.py --onnx-path examples\yolo_onnx\artifacts\yolov8n.onnx --output-path examples\yolo_fp16\artifacts\yolov8n_mixed_fp16.onnx --calibration-data examples\yolo_fp16\artifacts\autocast_data --providers cpu
+
+REM 4. Checker, FP32 I/O, static shape, FP16 initializer/Cast inspection
+python examples\yolo_fp16\inspect_mixed_precision_onnx.py --onnx-path examples\yolo_fp16\artifacts\yolov8n_mixed_fp16.onnx --output-json examples\yolo_fp16\artifacts\yolov8n_mixed_fp16.inspection.json
+
+REM 5. Conversion error (FP32 ONNX -> mixed-FP16 ONNX), ORT CUDA only
+python examples\yolo_fp16\compare_fp32_fp16_onnx.py --image-path assets\test_mouse.jpg --fp32-onnx-path examples\yolo_onnx\artifacts\yolov8n.onnx --fp16-onnx-path examples\yolo_fp16\artifacts\yolov8n_mixed_fp16.onnx
+
+REM 6. Return to the main TensorRT/ORT-GPU/CUDA-PyTorch environment
+call .venv-modelopt\Scripts\deactivate.bat
+.venv\Scripts\activate
+
+REM 7. Build strongly typed graph; TF32 stays off for remaining FP32 operations
+python examples\yolo_tensorrt\build_engine.py --onnx-path examples\yolo_fp16\artifacts\yolov8n_mixed_fp16.onnx --engine-path examples\yolo_tensorrt\artifacts\yolov8n_mixed_fp16.engine --model-precision mixed-fp16 --tf32 off --workspace-gb 1
+
+REM 8. Preserve/read raw TRT 11.1 inspector output (do not infer precision from filename)
+type examples\yolo_tensorrt\artifacts\yolov8n_mixed_fp16.engine.inspector.json
+
+REM 9. Build/runtime error (mixed-FP16 ONNX -> TensorRT), separate from conversion error
+python examples\yolo_tensorrt\compare_onnx_tensorrt.py --image-path assets\test_mouse.jpg --onnx-path examples\yolo_fp16\artifacts\yolov8n_mixed_fp16.onnx --engine-path examples\yolo_tensorrt\artifacts\yolov8n_mixed_fp16.engine
+
+REM 10-11. Accuracy smoke then identical full COCO evaluation
+python examples\yolo_coco\evaluate_coco.py --backend tensorrt --engine-path examples\yolo_tensorrt\artifacts\yolov8n_mixed_fp16.engine --conf-threshold 0.001 --iou-threshold 0.7 --limit 10 --output-json benchmark-results\fp16_coco_10.json
+python examples\yolo_coco\evaluate_coco.py --backend tensorrt --engine-path examples\yolo_tensorrt\artifacts\yolov8n_mixed_fp16.engine --conf-threshold 0.001 --iou-threshold 0.7 --limit 5000 --output-json benchmark-results\fp16_coco_5000.json
+
+REM 12. Pipeline functionality smoke (not a performance result)
+python examples\yolo_benchmark\benchmark_precision.py --mode pipeline --engine fp16=examples\yolo_tensorrt\artifacts\yolov8n_mixed_fp16.engine --limit 100 --pipeline-rounds 2 --discard-rounds 1 --conf-threshold 0.25 --iou-threshold 0.45
+
+REM 13. FP16 engine-only benchmark
+python examples\yolo_benchmark\benchmark_precision.py --mode engine --engine fp16=examples\yolo_tensorrt\artifacts\yolov8n_mixed_fp16.engine --engine-warmup 50 --engine-iterations 500 --engine-rounds 4 --discard-rounds 1 --output-json benchmark-results\fp16_engine.json --output-csv benchmark-results\fp16_engine.csv
+
+REM 14. FP16 full pipeline benchmark
+python examples\yolo_benchmark\benchmark_precision.py --mode pipeline --engine fp16=examples\yolo_tensorrt\artifacts\yolov8n_mixed_fp16.engine --limit 5000 --pipeline-rounds 4 --discard-rounds 1 --conf-threshold 0.25 --iou-threshold 0.45 --output-json benchmark-results\fp16_pipeline.json --output-csv benchmark-results\fp16_pipeline.csv
+
+REM 15. Final rotating-order FP32/FP16 comparison
+python examples\yolo_benchmark\benchmark_precision.py --mode both --engine fp32=examples\yolo_tensorrt\artifacts\yolov8n_fp32_strict.engine --engine fp16=examples\yolo_tensorrt\artifacts\yolov8n_mixed_fp16.engine --limit 5000 --engine-warmup 50 --engine-iterations 500 --engine-rounds 4 --pipeline-rounds 4 --discard-rounds 1 --conf-threshold 0.25 --iou-threshold 0.45 --output-json benchmark-results\fp32_fp16.json --output-csv benchmark-results\fp32_fp16.csv
+```
+
+The structure inspector proves only that internal FP16 representation exists (initializer and/or Cast); it does not claim every layer executes in FP16. The TensorRT inspector raw JSON is retained, while its schema is not guessed. Actual FP16 AP and latency remain `not measured` until these GPU commands are run locally.

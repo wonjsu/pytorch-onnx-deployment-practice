@@ -1,4 +1,4 @@
-"""Build a static, FP32 YOLO engine with the TensorRT 11.1 Python API."""
+"""Build static FP32-external-I/O YOLO engines with TensorRT 11.1."""
 
 from __future__ import annotations
 
@@ -44,8 +44,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--engine-path", type=writable_engine_path, required=True)
     parser.add_argument("--workspace-gb", type=positive_workspace_gb, default=1.0)
     parser.add_argument("--tf32", choices=("off", "on"), default="off")
+    parser.add_argument("--model-precision", choices=("fp32", "mixed-fp16", "int8"), default="fp32",
+                        help="Metadata/ONNX validation label; this does not set a TensorRT precision flag")
     parser.add_argument("--verbose", action="store_true")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.model_precision == "mixed-fp16" and args.tf32 != "off":
+        parser.error("mixed-fp16 requires --tf32 off so remaining FP32 operations cannot use TF32")
+    return args
 
 
 def _shape(shape: Any, tensor_name: str) -> tuple[int, ...]:
@@ -66,11 +71,16 @@ def main() -> None:
     args = parse_args()
     import tensorrt as trt
     import torch
+    from examples.yolo_fp16.inspect_mixed_precision_onnx import inspect_model
 
     if trt.__version__ != "11.1.0.106":
         raise RuntimeError(f"TensorRT 11.1.0.106 is required, found {trt.__version__}")
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is unavailable; refusing to build for an unknown GPU")
+
+    source_inspection = inspect_model(args.onnx_path, require_mixed=args.model_precision == "mixed-fp16")
+    if args.model_precision == "int8":
+        raise RuntimeError("INT8/Q-DQ/calibration is intentionally not implemented")
 
     logger = trt.Logger(trt.Logger.VERBOSE if args.verbose else trt.Logger.INFO)
     builder = trt.Builder(logger)
@@ -87,6 +97,7 @@ def main() -> None:
     for index in range(network.num_inputs):
         _shape(network.get_input(index).shape, network.get_input(index).name)
     config = builder.create_builder_config()
+    config.profiling_verbosity = trt.ProfilingVerbosity.DETAILED
     workspace_bytes = int(args.workspace_gb * 2**30)
     config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, workspace_bytes)
     tf32_enabled = args.tf32 == "on"
@@ -111,6 +122,34 @@ def main() -> None:
     if engine is None:
         args.engine_path.unlink(missing_ok=True)
         raise RuntimeError("New engine could not be deserialized")
+    inspector_path = Path(str(args.engine_path) + ".inspector.json")
+    inspector_summary = {"status": "unverified", "fp16_information_found": False}
+    try:
+        raw_inspector = engine.create_engine_inspector().get_engine_information(trt.LayerInformationFormat.JSON)
+        inspector_path.write_text(raw_inspector, encoding="utf-8")
+        try:
+            parsed = json.loads(raw_inspector)
+            # Preserve and search the actual TRT 11.1 schema without assuming field names.
+            serialized_inspection = json.dumps(parsed).lower()
+            evidence = []
+            def collect(value: Any, location: str = "root") -> None:
+                if isinstance(value, dict):
+                    for key, child in value.items():
+                        child_location = f"{location}.{key}"
+                        if any(term in key.lower() for term in ("precision", "datatype", "data_type", "format")):
+                            evidence.append({"location": child_location, "value": str(child)[:500]})
+                        collect(child, child_location)
+                elif isinstance(value, list):
+                    for index, child in enumerate(value): collect(child, f"{location}[{index}]")
+            collect(parsed)
+            inspector_summary = {"status": "parsed", "top_level_type": type(parsed).__name__,
+                                 "precision_datatype_format_evidence": evidence,
+                                 "fp16_information_found": "fp16" in serialized_inspection or "half" in serialized_inspection}
+        except json.JSONDecodeError as exc:
+            inspector_summary = {"status": "unverified", "reason": str(exc), "fp16_information_found": False}
+    except Exception as exc:
+        inspector_summary = {"status": "unverified", "reason": str(exc), "fp16_information_found": False}
+
     io_metadata = []
     for index in range(engine.num_io_tensors):
         name = engine.get_tensor_name(index)
@@ -129,6 +168,11 @@ def main() -> None:
         "gpu_name": torch.cuda.get_device_name(),
         "onnx_path": _relative_or_name(args.onnx_path),
         "onnx_sha256": hashlib.sha256(onnx_bytes).hexdigest(),
+        "source_onnx_sha256": hashlib.sha256(onnx_bytes).hexdigest(),
+        "source_onnx_inspection": source_inspection,
+        "model_precision": args.model_precision,
+        "inspector_path": _relative_or_name(inspector_path),
+        "inspector_summary": inspector_summary,
         "engine_path": _relative_or_name(args.engine_path),
         "tf32_enabled": tf32_enabled,
         "workspace_bytes": workspace_bytes,
@@ -146,6 +190,8 @@ def main() -> None:
     print(f"engine_build_time: {build_seconds:.3f} s")
     for item in io_metadata:
         print(f"I/O: name={item['name']} mode={item['mode']} shape={tuple(item['shape'])} dtype={item['dtype']}")
+    print(f"inspector_path: {inspector_path}")
+    print(f"inspector_summary: {json.dumps(inspector_summary)}")
     print(f"metadata_path: {metadata_path}")
 
 
