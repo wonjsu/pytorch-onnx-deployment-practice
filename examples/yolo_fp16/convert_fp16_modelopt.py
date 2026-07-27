@@ -1,8 +1,13 @@
 """Convert FP32 ONNX to mixed FP32/FP16 with ModelOpt AutoCast, atomically."""
 from __future__ import annotations
-import argparse, importlib.metadata, inspect, json, os, tempfile, time
+import argparse, importlib.metadata, inspect, json, os, sys, tempfile, time
 from pathlib import Path
 import numpy as np
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+if str(REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPOSITORY_ROOT))
+
 from examples.yolo_fp16.inspect_mixed_precision_onnx import inspect_model, sha256
 
 def validate_paths(source:Path, output:Path, force:bool=False)->None:
