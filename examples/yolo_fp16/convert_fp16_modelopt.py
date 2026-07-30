@@ -2,7 +2,6 @@
 from __future__ import annotations
 import argparse, importlib.metadata, inspect, json, os, sys, tempfile, time
 from pathlib import Path
-import numpy as np
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 if str(REPOSITORY_ROOT) not in sys.path:
@@ -16,13 +15,17 @@ def validate_paths(source:Path, output:Path, force:bool=False)->None:
     if source==output: raise ValueError('Refusing to overwrite the original ONNX model')
     if output.exists() and not force: raise FileExistsError(f'Output exists; pass --force to replace it: {output}')
 
-def load_calibration_data(path:Path)->list[dict[str,np.ndarray]]:
-    path=Path(path); files=sorted(path.glob('*.npz')) if path.is_dir() else [path]
-    if not files or not all(f.is_file() for f in files): raise ValueError(f'No NPZ calibration/reference batches found: {path}')
-    batches=[]
-    for file in files:
-        with np.load(file) as values: batches.append({k:values[k] for k in values.files})
-    return batches
+def validate_calibration_data(path:Path)->tuple[str,int|None]:
+    path=Path(path)
+    if path.is_dir():
+        files=sorted(path.glob('*.npz'))
+        if not files: raise ValueError(f'Calibration directory contains no NPZ batches: {path}')
+        return 'npz_directory',len(files)
+    if not path.is_file(): raise ValueError(f'Calibration data missing: {path}')
+    suffix=path.suffix.lower()
+    if suffix=='.npz': return 'npz_file',1
+    if suffix=='.json': return 'json_file',None
+    raise ValueError(f'Calibration data must be an NPZ file, JSON file, or directory of NPZ files: {path}')
 
 def _version(name:str)->str:
     try:return importlib.metadata.version(name)
@@ -30,11 +33,11 @@ def _version(name:str)->str:
 
 def convert(source:Path, output:Path, calibration_path:Path, providers:list[str], opset:int|None=None, force:bool=False)->dict:
     validate_paths(source,output,force); output.parent.mkdir(parents=True,exist_ok=True)
-    batches=load_calibration_data(calibration_path)
+    calibration_source_type,calibration_batch_count=validate_calibration_data(calibration_path)
     try: from modelopt.onnx.autocast import convert_to_mixed_precision
     except ImportError as exc: raise RuntimeError('ModelOpt AutoCast is unavailable. Use the separate requirements-modelopt.txt environment.') from exc
     signature=inspect.signature(convert_to_mixed_precision)
-    kwargs={'onnx_path':str(source),'low_precision_type':'fp16','keep_io_types':True,'calibration_data':batches,'providers':providers}
+    kwargs={'onnx_path':str(source),'low_precision_type':'fp16','keep_io_types':True,'calibration_data':str(calibration_path),'providers':providers}
     unsupported=[k for k in kwargs if k not in signature.parameters]
     if unsupported: raise RuntimeError(f'Installed ModelOpt AutoCast API does not support required arguments {unsupported}; signature is {signature}')
     if opset is not None:
@@ -54,7 +57,7 @@ def convert(source:Path, output:Path, calibration_path:Path, providers:list[str]
         elif converted is None and output.is_file(): raise RuntimeError('ModelOpt unexpectedly wrote the final output path; refusing non-atomic output')
         else: raise RuntimeError(f'Unsupported ModelOpt return type: {type(converted).__name__}')
         inspection=inspect_model(tmp); elapsed=time.perf_counter()-started
-        metadata={'conversion':'ModelOpt AutoCast mixed FP32/FP16','modelopt_version':_version('nvidia-modelopt'),'onnx_version':onnx.__version__,'providers':providers,'calibration_data':str(calibration_path),'calibration_batch_count':len(batches),'conversion_seconds':elapsed,'requested_opset':opset,'source_onnx_path':str(source),'source_onnx_sha256':sha256(source),'output_onnx_path':str(output),'output_onnx_sha256':inspection['sha256'],'inputs':inspection['inputs'],'outputs':inspection['outputs'],'opsets':inspection['opsets']}
+        metadata={'conversion':'ModelOpt AutoCast mixed FP32/FP16','modelopt_version':_version('nvidia-modelopt'),'onnx_version':onnx.__version__,'providers':providers,'calibration_data':str(calibration_path),'calibration_source_type':calibration_source_type,'calibration_batch_count':calibration_batch_count,'conversion_seconds':elapsed,'requested_opset':opset,'source_onnx_path':str(source),'source_onnx_sha256':sha256(source),'output_onnx_path':str(output),'output_onnx_sha256':inspection['sha256'],'inputs':inspection['inputs'],'outputs':inspection['outputs'],'opsets':inspection['opsets']}
         os.replace(tmp,output)
         metadata['output_onnx_sha256']=sha256(output)
         Path(str(output)+'.conversion.json').write_text(json.dumps(metadata,indent=2),encoding='utf-8')
