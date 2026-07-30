@@ -243,6 +243,9 @@ examples/yolo_tensorrt/artifacts/
 
 # ModelOpt mixed-precision and inspector generated artifacts
 examples/yolo_fp16/artifacts/
+examples/yolo_int8/artifacts/
+calibration-data/
+precision-experiment-results/
 *.npz
 *.inspector.json
 *.conversion.json

@@ -1,6 +1,24 @@
 # YOLOv8n precision benchmark results
 
-This page separates measured results from planned measurements. FP16 and INT8 remain **not measured**; no values are inferred. INT8 is comparison-table context only and is not implemented by this workflow.
+This page separates measured results from planned measurements. FP16 and INT8 remain **not measured**; no values are inferred. The unified FP16 and explicit-Q/DQ INT8 workflow is implemented, but this repository deliberately records no GPU result until a successful local full run produces it.
+
+## Reproducing the remaining measurements
+
+Run a non-publishable smoke validation first, then the full rotating-order protocol. The launcher directly selects `.venv` and `.venv-modelopt`, so neither environment needs to be activated. Calibration paths are intentionally mandatory for INT8; COCO train2017 is recommended to avoid evaluation overlap.
+
+```bat
+py -3.11 tools\run_precision_experiments.py --stage all --scope smoke ^
+  --calibration-images-dir input\coco\images\train2017 ^
+  --calibration-annotation-path input\coco\annotations\instances_train2017.json ^
+  --calibration-count 256 --calibration-method entropy
+
+py -3.11 tools\run_precision_experiments.py --stage all --scope full --resume ^
+  --calibration-images-dir input\coco\images\train2017 ^
+  --calibration-annotation-path input\coco\annotations\instances_train2017.json ^
+  --calibration-count 256 --calibration-method entropy
+```
+
+The INT8 builder consumes ModelOpt explicit Q/DQ and sets neither TensorRT FP16/INT8 builder flags nor a calibrator. The precision option validates graph structure and labels metadata; inspector datatype/format evidence—not the filename or label—is retained for review. External model and engine I/O remains FP32.
 
 ## Measured environment
 
