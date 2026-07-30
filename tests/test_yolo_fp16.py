@@ -8,7 +8,7 @@ import onnx
 import pytest
 from onnx import TensorProto, helper
 from PIL import Image
-from examples.yolo_fp16.convert_fp16_modelopt import validate_paths
+from examples.yolo_fp16.convert_fp16_modelopt import convert, validate_calibration_data, validate_paths
 from examples.yolo_fp16.generate_autocast_data import generate, select_images
 from examples.yolo_fp16.inspect_mixed_precision_onnx import inspect_model
 
@@ -67,3 +67,36 @@ def test_output_validation_and_overwrite(tmp_path):
  output.write_bytes(b'x')
  with pytest.raises(FileExistsError):validate_paths(source,output)
  validate_paths(source,output,True)
+
+def test_modelopt_receives_calibration_directory_path(tmp_path,monkeypatch):
+ source=tmp_path/'source.onnx';model(source,False)
+ calibration=tmp_path/'autocast_data';calibration.mkdir()
+ np.savez(calibration/'batch_0001.npz',images=np.zeros((1,3,640,640),dtype=np.float32))
+ np.savez(calibration/'batch_0000.npz',images=np.zeros((1,3,640,640),dtype=np.float32))
+ calls=[]
+ def mock_convert_to_mixed_precision(onnx_path,low_precision_type,keep_io_types,calibration_data,providers):
+  calls.append({'onnx_path':onnx_path,'low_precision_type':low_precision_type,'keep_io_types':keep_io_types,
+                'calibration_data':calibration_data,'providers':providers})
+  result=onnx.load(onnx_path)
+  result.graph.initializer.append(helper.make_tensor('half_weight',TensorProto.FLOAT16,[1],[1.0]))
+  return result
+ autocast=type(sys)('modelopt.onnx.autocast');autocast.convert_to_mixed_precision=mock_convert_to_mixed_precision
+ monkeypatch.setitem(sys.modules,'modelopt',type(sys)('modelopt'))
+ monkeypatch.setitem(sys.modules,'modelopt.onnx',type(sys)('modelopt.onnx'))
+ monkeypatch.setitem(sys.modules,'modelopt.onnx.autocast',autocast)
+ output=tmp_path/'output.onnx'
+ metadata=convert(source,output,calibration,['cpu'])
+ assert calls[0]['calibration_data']==str(calibration)
+ assert isinstance(calls[0]['calibration_data'],str)
+ assert metadata['calibration_source_type']=='npz_directory'
+ assert metadata['calibration_batch_count']==2
+
+def test_calibration_source_validation(tmp_path):
+ npz=tmp_path/'batch.npz';np.savez(npz,images=np.zeros(1))
+ json_path=tmp_path/'batches.json';json_path.write_text('{}')
+ assert validate_calibration_data(npz)==('npz_file',1)
+ assert validate_calibration_data(json_path)==('json_file',None)
+ empty=tmp_path/'empty';empty.mkdir()
+ with pytest.raises(ValueError,match='contains no NPZ'):validate_calibration_data(empty)
+ invalid=tmp_path/'batch.npy';invalid.write_bytes(b'x')
+ with pytest.raises(ValueError,match='must be an NPZ file'):validate_calibration_data(invalid)
