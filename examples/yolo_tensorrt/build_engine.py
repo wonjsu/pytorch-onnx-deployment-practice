@@ -50,6 +50,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if args.model_precision == "mixed-fp16" and args.tf32 != "off":
         parser.error("mixed-fp16 requires --tf32 off so remaining FP32 operations cannot use TF32")
+    if args.model_precision == "int8" and args.tf32 != "off":
+        parser.error("int8 explicit-Q/DQ builds require --tf32 off")
     return args
 
 
@@ -78,9 +80,11 @@ def main() -> None:
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is unavailable; refusing to build for an unknown GPU")
 
-    source_inspection = inspect_model(args.onnx_path, require_mixed=args.model_precision == "mixed-fp16")
     if args.model_precision == "int8":
-        raise RuntimeError("INT8/Q-DQ/calibration is intentionally not implemented")
+        from examples.yolo_int8.inspect_int8_qdq_onnx import inspect_model as inspect_qdq
+        source_inspection = inspect_qdq(args.onnx_path)
+    else:
+        source_inspection = inspect_model(args.onnx_path, require_mixed=args.model_precision == "mixed-fp16")
 
     logger = trt.Logger(trt.Logger.VERBOSE if args.verbose else trt.Logger.INFO)
     builder = trt.Builder(logger)
@@ -144,7 +148,9 @@ def main() -> None:
             collect(parsed)
             inspector_summary = {"status": "parsed", "top_level_type": type(parsed).__name__,
                                  "precision_datatype_format_evidence": evidence,
-                                 "fp16_information_found": "fp16" in serialized_inspection or "half" in serialized_inspection}
+                                 "fp32_evidence": "float" in serialized_inspection or "fp32" in serialized_inspection,
+                                 "fp16_evidence": "fp16" in serialized_inspection or "half" in serialized_inspection,
+                                 "int8_evidence": "int8" in serialized_inspection}
         except json.JSONDecodeError as exc:
             inspector_summary = {"status": "unverified", "reason": str(exc), "fp16_information_found": False}
     except Exception as exc:
