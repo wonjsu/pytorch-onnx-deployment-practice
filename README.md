@@ -184,7 +184,7 @@ FP16은 정확도 저하 없이 현재 INT8 baseline과 같거나 더 나은 iso
 
 ## Legacy ONNX example
 
-`examples/resnet18_onnx`는 PyTorch와 ONNX Runtime의 기본 output consistency 및 inference-only/end-to-end 측정을 익히기 위해 만든 초기 예제입니다. 저장소에는 남겨 두지만, 취업용 프로젝트의 핵심은 YOLOv8n TensorRT precision 최적화와 pipeline bottleneck 분석입니다.
+`examples/resnet18_onnx`는 PyTorch와 ONNX Runtime의 기본 output consistency 및 inference-only/end-to-end 측정을 익히기 위해 만든 초기 예제입니다. 저장소에는 남겨 두지만, 현재 프로젝트의 중심은 YOLOv8n TensorRT precision 최적화와 pipeline bottleneck 분석입니다.
 
 ## Artifact 정책
 
