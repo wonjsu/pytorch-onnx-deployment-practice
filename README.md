@@ -5,34 +5,53 @@ PyTorch YOLOv8n을 ONNX로 변환하고, ONNX Runtime과 TensorRT에서 출력 �
 이 저장소의 중심은 단순한 포맷 변환이 아니라 다음 문제를 재현 가능한 방식으로 확인하는 것입니다.
 
 - 변환된 모델의 출력이 원본과 얼마나 일치하는가
-- TensorRT FP32와 mixed-FP16이 실제 엔진 내부에서 어떤 precision으로 실행되는가
-- COCO 정확도를 유지하면서 TensorRT compute latency가 얼마나 줄어드는가
+- TensorRT FP32, mixed-FP16, explicit-Q/DQ INT8이 실제 엔진 내부에서 어떤 precision으로 실행되는가
+- COCO 정확도 변화와 TensorRT compute latency 감소 사이의 trade-off는 무엇인가
 - 모델 연산이 빨라져도 전체 pipeline이 충분히 빨라지지 않는 이유는 무엇인가
-- INT8 explicit Q/DQ 실험을 동일한 평가 기준으로 어떻게 확장할 것인가
+- INT8 calibration과 mixed-precision fallback을 어떻게 개선할 것인가
 
 ## 핵심 결과
 
 실행 환경: NVIDIA GeForce RTX 3060 Laptop GPU, TensorRT 11.1.0.106, CUDA 12.6, batch 1, `1x3x640x640`.
 
-### FP32 strict vs mixed-FP16 TensorRT
+정확도 평가는 COCO val2017 5,000장으로 수행했습니다. INT8 baseline은 val2017에서 seed 0으로 무작위 선택한 256장을 entropy calibration에 사용했으므로 calibration과 evaluation이 일부 겹치는 tutorial-style baseline입니다.
 
-| Metric | FP32 strict | mixed FP16 | 변화 |
+### 정확도
+
+| Metric | FP32 strict | mixed FP16 | INT8 Q/DQ |
 |---|---:|---:|---:|
-| COCO AP 0.50:0.95 | 0.3672 | 0.3674 | +0.0002 |
-| Engine compute median | 2.625 ms | 1.337 ms | **49.1% 감소** |
-| GPU total median | 3.590 ms | 2.332 ms | **35.0% 감소** |
-| Host latency median | 6.010 ms | 4.689 ms | **22.0% 감소** |
-| Engine throughput median | 166.40 FPS | 213.26 FPS | **28.2% 증가** |
-| Pipeline excluding file I/O median | 17.295 ms | 16.616 ms | **3.9% 감소** |
-| Full E2E median | 20.342 ms | 19.665 ms | **3.3% 감소** |
+| COCO AP 0.50:0.95 | 0.3672 | 0.3674 | 0.3573 |
+| AP 0.50 | 0.5165 | 0.5170 | 0.5089 |
+| AP 0.75 | 0.3990 | 0.4000 | 0.3899 |
+| AP small | 0.1774 | 0.1776 | 0.1668 |
+| AP medium | 0.4048 | 0.4052 | 0.3902 |
+| AP large | 0.5188 | 0.5186 | 0.5107 |
+| AR maxDets=100 | 0.5547 | 0.5549 | 0.5469 |
 
-FP16은 TensorRT compute를 거의 절반으로 줄였지만 전체 pipeline 개선은 3~4%에 그쳤습니다. CPU letterbox preprocessing, H2D/D2H, postprocessing/NMS, Python overhead가 남아 있기 때문입니다. 또한 이번 측정에서는 FP16의 pipeline H2D/D2H와 P95 지연시간이 일부 증가했으므로, FP16을 단순히 모든 지표에서 빠르다고 해석하지 않습니다.
+FP16은 정확도를 유지했습니다. 현재 INT8 baseline은 FP32 대비 AP 0.50:0.95가 `0.0099` 감소했습니다.
+
+### 동일 실행 FP32 / FP16 / INT8 latency
+
+세 엔진을 같은 프로세스에서 rotating order로 측정했습니다. 4 rounds 중 첫 round는 제외했습니다.
+
+| Metric | FP32 strict | mixed FP16 | INT8 Q/DQ |
+|---|---:|---:|---:|
+| Engine compute median | 3.108 ms | 1.490 ms | 1.649 ms |
+| GPU total median | 4.269 ms | 2.842 ms | 2.986 ms |
+| Host latency median | 7.224 ms | 5.832 ms | 6.073 ms |
+| Engine throughput median | 138.43 FPS | 171.45 FPS | 164.68 FPS |
+| Pipeline compute median | 6.314 ms | 3.014 ms | 3.028 ms |
+| Pipeline excluding file I/O median | 18.150 ms | 15.033 ms | 15.024 ms |
+| Full E2E median | 21.385 ms | 18.182 ms | 18.178 ms |
+| Pipeline throughput median | 55.10 FPS | 66.52 FPS | 66.56 FPS |
+
+같은 실행 안에서는 FP16과 INT8의 full-pipeline latency가 사실상 동일했습니다. INT8 engine compute는 FP16보다 약 `10.7%` 느렸지만, 전체 E2E 차이는 `0.004 ms` 수준이었습니다. 현재 INT8 엔진은 순수 INT8이 아니라 INT8·FP16·FP32 mixed precision이며, Inspector 기준으로 INT8 구간과 FP16 fallback이 함께 존재합니다.
 
 상세 결과와 측정 조건은 [`docs/precision_benchmark_results.md`](docs/precision_benchmark_results.md)에 기록했습니다.
 
 ## 검증 근거
 
-### 1. FP32 ONNX → mixed-FP16 ONNX
+### FP16
 
 ModelOpt AutoCast로 생성된 ONNX는 외부 입력과 출력을 FP32로 유지하고 내부 표현을 FP16 중심으로 변환합니다.
 
@@ -40,22 +59,23 @@ ModelOpt AutoCast로 생성된 ONNX는 외부 입력과 출력을 FP32로 유지
 - FP32 initializer: 3
 - Cast to FP16: 1
 - Cast to FP32: 2
-- Input: `images`, FP32, `(1, 3, 640, 640)`
-- Output: `output0`, FP32, `(1, 84, 8400)`
-
-단일 이미지 ORT CUDA 비교에서는 raw tensor `allclose=False`였지만, 최종 검출은 동일 class로 매칭되었고 confidence 차이는 `0.003905`, bbox IoU는 `0.998908`이었습니다. 최종 정확도 판단은 단일 tensor tolerance가 아니라 COCO val2017 5,000장 평가로 수행했습니다.
-
-### 2. mixed-FP16 ONNX → TensorRT engine
-
-TensorRT 11.1 strongly typed workflow를 사용합니다.
-
-- `BuilderFlag.FP16`을 사용하지 않음
-- FP16 precision은 ModelOpt가 생성한 mixed-FP16 ONNX 그래프에 기록
-- TF32는 비활성화
+- Input / output: FP32
 - TensorRT Engine Inspector에서 내부 `Half` datatype 확인
-- 외부 engine I/O는 `Float` 유지
 
-엔진 파일명이나 CLI label만으로 precision을 주장하지 않고, ONNX 구조 검사와 Engine Inspector 결과를 metadata에 함께 저장합니다.
+단일 이미지 ORT CUDA 비교에서는 raw tensor `allclose=False`였지만, 최종 검출은 동일 class로 매칭되었고 confidence 차이는 `0.003905`, bbox IoU는 `0.998908`이었습니다. 최종 정확도는 COCO val2017 5,000장으로 판단했습니다.
+
+### INT8 explicit Q/DQ
+
+TensorRT 11.1에서 legacy calibrator나 `BuilderFlag.INT8`을 사용하지 않습니다. ModelOpt가 FP32 ONNX에 calibration 결과와 explicit Q/DQ를 삽입하고 TensorRT가 strongly typed graph를 build합니다.
+
+- `QuantizeLinear`: 134
+- `DequantizeLinear`: 134
+- INT8 initializer: 268
+- FP16 initializer: 399
+- Input / output: FP32
+- Engine Inspector에서 `Int8`, `Half`, `Float` datatype 확인
+
+Q/DQ 노드 수만으로 모든 연산이 INT8이라고 주장하지 않습니다. 현재 엔진은 INT8 실행 구간과 FP16 fallback을 함께 사용합니다.
 
 ## Benchmark 설계
 
@@ -91,80 +111,76 @@ TensorRT 11.1 strongly typed workflow를 사용합니다.
 | `examples/yolo_int8` | ModelOpt PTQ calibration, explicit Q/DQ ONNX 생성 및 검사 |
 | `examples/yolo_benchmark` | FP32/FP16/INT8 rotating-order engine 및 pipeline benchmark |
 | `tools/run_precision_experiments.py` | `.venv`와 `.venv-modelopt`를 직접 호출하는 smoke/full 통합 실행기 |
-| `docs/precision_benchmark_results.md` | 측정된 FP32/FP16 정확도와 latency 결과 |
+| `docs/precision_benchmark_results.md` | 측정된 FP32/FP16/INT8 정확도와 latency 결과 |
 | `examples/resnet18_onnx` | 초기 ONNX Runtime 변환 검증 예제. 현재 프로젝트의 핵심 결과는 아님 |
 
 ## 실행
 
 Windows CMD, repository root 기준입니다.
 
-### 환경
-
-```bat
-py -3.11 -m venv .venv
-.venv\Scripts\activate
-python -m pip install -r requirements.txt
-python -m pip install -r requirements-tensorrt.txt
-```
-
-ModelOpt는 dependency 충돌을 피하기 위해 별도 환경에 설치합니다.
-
-```bat
-py -3.11 -m venv .venv-modelopt
-.venv-modelopt\Scripts\activate
-python -m pip install -r requirements-modelopt.txt
-```
-
 ### FP16 전체 실험
-
-통합 실행기는 활성화된 환경에 의존하지 않고 각 virtual environment의 Python을 직접 호출합니다.
 
 ```bat
 py -3.11 tools\run_precision_experiments.py --stage fp16 --scope smoke
 py -3.11 tools\run_precision_experiments.py --stage fp16 --scope full --resume
 ```
 
-`smoke`는 engine build, 단일 이미지 출력 비교, COCO 10장 accuracy, 100장 단축 benchmark가 끝까지 동작하는지 확인합니다. 최종 성능 수치로 사용하지 않습니다.
-
-`full`은 COCO 5,000장 정확도와 FP32/FP16 rotating-order engine/pipeline benchmark를 수행합니다.
-
-### INT8 explicit Q/DQ
-
-TensorRT 11.1에서 legacy calibrator나 `BuilderFlag.INT8`을 사용하지 않습니다. ModelOpt가 FP32 ONNX에 calibration 결과와 explicit Q/DQ를 삽입하고, TensorRT는 해당 strongly typed graph를 build합니다.
+### INT8 baseline
 
 ```bat
 py -3.11 tools\run_precision_experiments.py --stage int8 --scope smoke ^
-  --calibration-images-dir input\coco\images\train2017 ^
-  --calibration-annotation-path input\coco\annotations\instances_train2017.json ^
+  --calibration-images-dir input\coco\images\val2017 ^
+  --calibration-annotation-path input\coco\annotations\instances_val2017.json ^
   --calibration-count 256 ^
-  --calibration-method entropy
+  --calibration-seed 0 ^
+  --calibration-method entropy ^
+  --output-dir precision-experiment-results\int8_val256_entropy
 ```
 
-INT8 workflow는 구현되어 있지만, 정확도와 latency 수치는 실제 full protocol이 완료되기 전까지 결과 표에 기록하지 않습니다.
+```bat
+py -3.11 tools\run_precision_experiments.py --stage int8 --scope full ^
+  --calibration-images-dir input\coco\images\val2017 ^
+  --calibration-annotation-path input\coco\annotations\instances_val2017.json ^
+  --calibration-count 256 ^
+  --calibration-seed 0 ^
+  --calibration-method entropy ^
+  --output-dir precision-experiment-results\int8_val256_entropy ^
+  --resume
+```
 
-## 구현상의 주요 선택
+### 동일 실행 latency 비교
 
-- ONNX Runtime CUDA와 TensorRT에서 CPU fallback을 허용하지 않음
-- TensorRT 11.1 named tensor API와 `execute_async_v3()` 사용
-- non-default CUDA stream 사용
-- reusable CUDA input/output buffers 및 pinned host output buffer 사용
-- CUDA event로 H2D / compute / D2H 분리 측정
-- engine artifact에 source ONNX SHA-256, TensorRT/CUDA/GPU 정보, I/O metadata 저장
-- engine binary와 ONNX/calibration/result artifact는 Git에서 제외
-- accuracy threshold와 latency threshold를 분리
-- cold-cache 영향을 줄이기 위해 첫 round 제외 및 engine order rotation
+```bat
+python -m examples.yolo_benchmark.benchmark_precision ^
+  --mode both ^
+  --engine fp32=examples\yolo_tensorrt\artifacts\yolov8n_fp32_strict.engine ^
+  --engine fp16=examples\yolo_tensorrt\artifacts\yolov8n_mixed_fp16.engine ^
+  --engine int8=examples\yolo_tensorrt\artifacts\yolov8n_int8.engine ^
+  --images-dir input\coco\images\val2017 ^
+  --annotation-path input\coco\annotations\instances_val2017.json ^
+  --limit 5000 ^
+  --engine-warmup 50 ^
+  --engine-iterations 500 ^
+  --engine-rounds 4 ^
+  --pipeline-rounds 4 ^
+  --discard-rounds 1 ^
+  --conf-threshold 0.25 ^
+  --iou-threshold 0.45 ^
+  --output-json precision-experiment-results\timing_fp32_fp16_int8\benchmark_full.json ^
+  --output-csv precision-experiment-results\timing_fp32_fp16_int8\benchmark_full.csv
+```
 
 ## 현재 해석과 다음 단계
 
-mixed-FP16은 정확도 저하 없이 TensorRT compute를 크게 줄였습니다. 그러나 full pipeline의 개선 폭은 작았고 tail latency는 일관되게 개선되지 않았습니다.
+FP16은 정확도 저하 없이 현재 INT8 baseline과 같거나 더 나은 isolated-engine latency를 보였습니다. INT8은 FP32 대비 E2E를 줄였지만 FP16보다 추가 속도 이득이 없고 AP가 `0.0099` 감소했습니다.
 
-따라서 다음 최적화 우선순위는 다음과 같습니다.
+따라서 다음 단계는 단순히 INT8을 다시 실행하는 것이 아니라 다음을 분석하는 것입니다.
 
-1. CPU letterbox preprocessing의 CUDA 이전
-2. 불필요한 host-device transfer 제거
-3. postprocessing/NMS의 GPU 실행 또는 TensorRT graph 통합 검토
-4. 같은 protocol로 FP32/FP16 재측정
-5. INT8 calibration과 sensitivity 분석을 통해 최소 FP16 fallback 탐색
+1. calibration method, sample count, seed, sampling strategy 비교
+2. layer/stage별 quantization sensitivity 측정
+3. 민감한 구간의 FP16 fallback
+4. AP와 latency의 Pareto 비교
+5. 이후 CUDA preprocessing 및 GPU postprocessing 검토
 
 ## Legacy ONNX example
 
