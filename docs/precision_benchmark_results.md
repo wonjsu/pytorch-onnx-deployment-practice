@@ -1,8 +1,8 @@
 # YOLOv8n TensorRT precision benchmark
 
-This document records only measurements completed on the target GPU. FP32 and mixed-FP16 are measured. INT8 remains unmeasured.
+이 문서는 target GPU에서 실제로 완료된 FP32, mixed-FP16, explicit-Q/DQ INT8 결과만 기록합니다.
 
-## 1. Environment and protocol
+## 1. 환경과 protocol
 
 | Item | Value |
 |---|---|
@@ -13,18 +13,21 @@ This document records only measurements completed on the target GPU. FP32 and mi
 | External engine I/O | FP32 |
 | FP32 configuration | strict FP32, TF32 disabled |
 | FP16 configuration | ModelOpt mixed-FP16 ONNX, TF32 disabled |
+| INT8 configuration | ModelOpt explicit Q/DQ ONNX, entropy calibration |
 
-Accuracy and latency were evaluated separately.
+정확도와 latency를 분리했습니다.
 
 - Accuracy: COCO val2017 5,000 images, confidence `0.001`, NMS IoU `0.7`.
 - Latency: confidence `0.25`, NMS IoU `0.45`.
 - Engine benchmark: warm-up 50, 500 iterations per round, 4 rounds, round 1 discarded.
 - Pipeline benchmark: 5,000 images per round, 4 rounds, round 1 discarded.
-- FP32 and FP16 engine order was rotated between rounds.
+- FP32, FP16, INT8 engine order rotated between rounds.
+
+INT8 baseline calibration은 val2017에서 seed 0으로 무작위 선택한 256장을 사용했습니다. 따라서 calibration 이미지와 evaluation 이미지가 일부 겹치는 tutorial-style baseline이며, 독립 calibration 결과로 표현하지 않습니다.
 
 ## 2. Precision validation
 
-The mixed-FP16 ONNX keeps FP32 external I/O while storing most internal initializers as FP16.
+### 2.1 mixed-FP16
 
 | ONNX inspection | Value |
 |---|---:|
@@ -34,85 +37,154 @@ The mixed-FP16 ONNX keeps FP32 external I/O while storing most internal initiali
 | Cast to FP32 | 2 |
 | Input / output dtype | FP32 / FP32 |
 
-TensorRT Engine Inspector reported `Half` datatypes across internal layers while engine input and output remained `Float`. Precision is therefore supported by graph and inspector evidence, not inferred from the filename.
+TensorRT Engine Inspector에서 internal `Half` datatype이 확인됐고 external engine I/O는 `Float`입니다.
 
-### FP32 ONNX vs mixed-FP16 ONNX sanity check
-
-Single-image ORT CUDA comparison:
+단일 이미지 ORT CUDA 비교에서는 raw tensor `allclose=False`였지만 최종 detection은 동일 class로 매칭됐습니다.
 
 | Metric | Value |
 |---|---:|
-| Raw output shape | `(1, 84, 8400)` |
 | Max absolute error | 4.3576 |
 | Mean absolute error | 0.006319 |
 | RMSE | 0.04521 |
-| `allclose` | False |
 | Matched detections | 1 |
 | Unmatched detections | 0 / 0 |
 | Confidence | 0.662108 → 0.658203 |
 | Confidence absolute difference | 0.003905 |
 | Bounding-box IoU | 0.998908 |
 
-The strict elementwise tolerance did not pass, but the final detection remained matched with high box overlap. Final accuracy was therefore judged with the full COCO evaluation rather than `allclose` alone.
+### 2.2 explicit-Q/DQ INT8
 
-## 3. COCO accuracy
+| ONNX inspection | Value |
+|---|---:|
+| QuantizeLinear | 134 |
+| DequantizeLinear | 134 |
+| INT8 initializers | 268 |
+| FP16 initializers | 399 |
+| FP32 initializers | 2 |
+| Input / output dtype | FP32 / FP32 |
 
-| Metric | FP32 strict | mixed FP16 | Absolute delta |
+TensorRT Engine Inspector에서 `Int8`, `Half`, `Float` datatype이 함께 확인됐습니다. Q/DQ node count는 explicit quantization graph를 증명하지만 모든 operation이 INT8로 실행된다는 뜻은 아닙니다. 현재 엔진은 INT8 구간과 FP16 fallback을 함께 사용하는 mixed-precision engine입니다.
+
+## 3. COCO 정확도
+
+| Metric | FP32 strict | mixed FP16 | INT8 Q/DQ | INT8 - FP32 |
+|---|---:|---:|---:|---:|
+| Prediction count | 857,979 | 860,789 | 893,396 | +35,417 |
+| AP 0.50:0.95 | 0.3672 | 0.3674 | 0.3573 | -0.0099 |
+| AP 0.50 | 0.5165 | 0.5170 | 0.5089 | -0.0076 |
+| AP 0.75 | 0.3990 | 0.4000 | 0.3899 | -0.0091 |
+| AP small | 0.1774 | 0.1776 | 0.1668 | -0.0106 |
+| AP medium | 0.4048 | 0.4052 | 0.3902 | -0.0146 |
+| AP large | 0.5188 | 0.5186 | 0.5107 | -0.0081 |
+| AR maxDets=100 | 0.5547 | 0.5549 | 0.5469 | -0.0078 |
+
+FP16에서는 의미 있는 정확도 저하가 없었습니다. 현재 INT8 baseline은 FP32 대비 AP 0.50:0.95가 `0.0099` 감소했습니다. 절대 감소는 medium object에서 가장 컸고, 상대 감소율은 small object에서 가장 컸습니다.
+
+## 4. 동일 실행 engine-only benchmark
+
+세 엔진을 같은 process에서 rotating order로 실행했습니다. 아래 값은 first round를 제외한 3 rounds aggregate입니다.
+
+| Metric | FP32 strict | mixed FP16 | INT8 Q/DQ |
 |---|---:|---:|---:|
-| Prediction count | 857,979 | 860,789 | +2,810 |
-| AP 0.50:0.95 | 0.3672 | 0.3674 | +0.0002 |
-| AP 0.50 | 0.5165 | 0.5170 | +0.0005 |
-| AP 0.75 | 0.3990 | 0.4000 | +0.0010 |
-| AP small | 0.1774 | 0.1776 | +0.0002 |
-| AP medium | 0.4048 | 0.4052 | +0.0004 |
-| AP large | 0.5188 | 0.5186 | -0.0002 |
-| AR maxDets=100 | 0.5547 | 0.5549 | +0.0002 |
+| H2D mean / median / P95 (ms) | 0.880 / 0.786 / 1.375 | 0.886 / 0.795 / 1.344 | 0.988 / 0.868 / 1.541 |
+| Compute mean / median / P95 (ms) | 3.102 / 3.108 / 3.904 | 1.707 / 1.490 / 2.460 | 1.758 / 1.649 / 2.554 |
+| D2H mean / median / P95 (ms) | 0.303 / 0.272 / 0.456 | 0.291 / 0.259 / 0.434 | 0.298 / 0.264 / 0.455 |
+| GPU total mean / median / P95 (ms) | 4.285 / 4.269 / 5.311 | 2.884 / 2.842 / 3.778 | 3.044 / 2.986 / 4.090 |
+| Host latency mean / median / P95 (ms) | 7.522 / 7.224 / 9.083 | 6.060 / 5.832 / 7.688 | 6.474 / 6.073 / 8.933 |
+| Throughput mean / median (FPS) | 134.20 / 138.43 | 167.34 / 171.45 | 159.71 / 164.68 |
 
-No meaningful accuracy degradation was observed at COCO scale.
+FP32 대비 median 변화:
 
-## 4. Engine-only benchmark
+| Metric | mixed FP16 | INT8 Q/DQ |
+|---|---:|---:|
+| Compute latency | 52.1% 감소 | 46.9% 감소 |
+| GPU total | 33.4% 감소 | 30.1% 감소 |
+| Host latency | 19.3% 감소 | 15.9% 감소 |
+| Throughput | 23.9% 증가 | 19.0% 증가 |
 
-The engine-only benchmark isolates a fixed preprocessed tensor and reuses device buffers, pinned host buffers, a non-default CUDA stream, and CUDA events.
+동일 실행에서는 INT8 compute median이 FP16보다 약 `10.7%` 느렸습니다. 따라서 현재 INT8 baseline이 FP16보다 더 낮은 precision을 사용한다는 사실만으로 더 빠른 engine이라고 결론 내릴 수 없습니다. INT8/FP16 precision transition, fallback layer, tactic selection, memory/launch overhead를 함께 고려해야 합니다.
 
-| Metric | FP32 strict | mixed FP16 | Change |
+## 5. 동일 실행 full pipeline benchmark
+
+Pipeline mode는 image loading, CPU letterbox preprocessing, H2D, TensorRT execution, D2H, confidence filtering, coordinate restoration, class-aware NMS, Python overhead를 포함합니다.
+
+| Metric | FP32 strict | mixed FP16 | INT8 Q/DQ |
 |---|---:|---:|---:|
-| H2D mean / median / P95 (ms) | 0.721 / 0.700 / 0.868 | 0.733 / 0.712 / 0.913 | transfer unchanged |
-| TensorRT compute mean / median / P95 (ms) | 2.625 / 2.625 / 2.770 | 1.395 / 1.337 / 1.870 | median **49.1% lower** |
-| D2H mean / median / P95 (ms) | 0.271 / 0.261 / 0.323 | 0.275 / 0.259 / 0.340 | transfer unchanged |
-| GPU total mean / median / P95 (ms) | 3.617 / 3.590 / 3.895 | 2.403 / 2.332 / 2.936 | median **35.0% lower** |
-| Host latency mean / median / P95 (ms) | 6.077 / 6.010 / 6.614 | 4.806 / 4.689 / 5.601 | median **22.0% lower** |
-| Throughput mean / median (FPS) | 164.89 / 166.40 | 209.30 / 213.26 | median **28.2% higher** |
+| Image load mean / median / P95 (ms) | 3.101 / 3.096 / 4.370 | 3.104 / 3.090 / 4.375 | 3.113 / 3.110 / 4.369 |
+| Preprocess mean / median / P95 (ms) | 5.188 / 4.773 / 7.662 | 5.231 / 4.818 / 7.566 | 5.240 / 4.829 / 7.614 |
+| H2D mean / median / P95 (ms) | 1.088 / 0.969 / 1.638 | 1.132 / 1.004 / 1.694 | 1.193 / 1.077 / 1.755 |
+| Compute mean / median / P95 (ms) | 6.386 / 6.314 / 8.235 | 3.681 / 3.014 / 7.330 | 3.578 / 3.028 / 7.544 |
+| D2H mean / median / P95 (ms) | 0.333 / 0.314 / 0.477 | 0.336 / 0.306 / 0.544 | 0.352 / 0.310 / 0.580 |
+| Postprocess mean / median / P95 (ms) | 2.105 / 2.018 / 2.834 | 2.177 / 2.103 / 2.984 | 2.152 / 2.068 / 2.941 |
+| Other overhead mean / median / P95 (ms) | 3.315 / 3.171 / 4.911 | 3.261 / 3.066 / 4.759 | 3.253 / 3.038 / 4.791 |
+| Pipeline excluding file I/O mean / median / P95 (ms) | 18.414 / 18.150 / 21.595 | 15.819 / 15.033 / 20.806 | 15.767 / 15.024 / 21.174 |
+| Full E2E mean / median / P95 (ms) | 21.516 / 21.385 / 24.550 | 18.923 / 18.182 / 24.022 | 18.880 / 18.178 / 24.241 |
+| Throughput mean / median (FPS) | 54.82 / 55.10 | 65.29 / 66.52 | 65.17 / 66.56 |
 
-This demonstrates a clear FP16 benefit inside TensorRT compute.
+FP32 대비 median 변화:
 
-## 5. Full pipeline benchmark
+| Metric | mixed FP16 | INT8 Q/DQ |
+|---|---:|---:|
+| Pipeline compute | 52.3% 감소 | 52.0% 감소 |
+| Pipeline excluding file I/O | 17.2% 감소 | 17.2% 감소 |
+| Full E2E | 15.0% 감소 | 15.0% 감소 |
+| Pipeline throughput | 20.7% 증가 | 20.8% 증가 |
 
-Pipeline mode includes image loading, CPU letterbox preprocessing, H2D, TensorRT execution, D2H, confidence filtering, coordinate restoration, class-aware NMS, and Python overhead.
+FP16과 INT8의 full E2E median 차이는 `0.004 ms`로 사실상 동일합니다. 모델 compute가 빨라진 뒤 CPU preprocessing, transfer, postprocessing, runtime overhead가 상대적으로 지배적이기 때문입니다.
 
-| Metric | FP32 strict | mixed FP16 | Change |
-|---|---:|---:|---:|
-| Image load mean / median / P95 (ms) | 2.847 / 2.845 / 3.948 | 2.837 / 2.834 / 3.910 | similar |
-| Preprocess mean / median / P95 (ms) | 4.496 / 4.068 / 6.537 | 4.458 / 4.051 / 6.435 | similar |
-| H2D mean / median / P95 (ms) | 0.959 / 0.942 / 1.173 | 1.302 / 1.256 / 1.716 | higher in this run |
-| TensorRT compute mean / median / P95 (ms) | 7.465 / 7.630 / 7.794 | 6.388 / 6.176 / 7.972 | median **19.1% lower**; P95 slightly worse |
-| D2H mean / median / P95 (ms) | 0.348 / 0.345 / 0.426 | 0.611 / 0.580 / 0.841 | higher in this run |
-| Postprocess mean / median / P95 (ms) | 1.861 / 1.804 / 2.302 | 1.848 / 1.798 / 2.245 | similar |
-| Other overhead mean / median / P95 (ms) | 2.505 / 2.413 / 3.051 | 2.570 / 2.508 / 3.061 | similar |
-| Pipeline excluding file I/O mean / median / P95 (ms) | 17.634 / 17.295 / 20.144 | 17.176 / 16.616 / 20.617 | median **3.9% lower**; P95 2.3% higher |
-| Full E2E mean / median / P95 (ms) | 20.481 / 20.342 / 22.853 | 20.013 / 19.665 / 23.675 | median **3.3% lower**; P95 3.6% higher |
-| Pipeline throughput mean / median (FPS) | 57.08 / 57.82 | 58.70 / 60.18 | median **4.1% higher** |
+전처리 median도 FP32 `4.773 ms`, FP16 `4.818 ms`, INT8 `4.829 ms`로 거의 같습니다. 세 engine이 동일한 CPU preprocessing 함수를 사용하므로 이 차이는 일반적인 실행 변동으로 해석합니다.
 
-## 6. Interpretation
+후처리 median은 FP32 `2.018 ms`, FP16 `2.103 ms`, INT8 `2.068 ms`입니다. 후처리는 raw score와 threshold 통과 candidate 수에 따라 작업량이 달라질 수 있지만, 현재 차이는 작고 candidate count를 benchmark에 별도로 저장하지 않았으므로 precision 영향으로 단정하지 않습니다.
 
-FP16 reduced isolated TensorRT compute latency by approximately half, but full-pipeline median latency improved by only 3–4%. The dominant remaining costs are CPU preprocessing, transfers, postprocessing, and Python/runtime overhead. FP16 also showed higher H2D/D2H timings and slightly worse P95 pipeline latency in this measurement, so those transfer and tail-latency effects should be investigated before claiming a uniformly faster end-to-end system.
+## 6. 해석
 
-The next optimization target is therefore not another model-format conversion. It is reducing non-compute overhead through GPU preprocessing, avoiding unnecessary host transfers, moving NMS/postprocessing closer to the device, and then re-running the same rotating benchmark protocol.
+현재 결과에서 FP16이 가장 실용적인 baseline입니다.
 
-## 7. Reproduction
+- FP16: accuracy 유지, isolated engine latency 최소, E2E 약 15% 감소.
+- INT8: FP32 대비 E2E 약 15% 감소, 그러나 FP16 대비 추가 speedup 없음, AP 0.0099 감소.
+
+따라서 다음 단계는 단순한 재측정이 아니라 INT8 구성 자체를 개선하는 것입니다.
+
+1. entropy / max calibration 비교
+2. sample count와 seed 안정성 비교
+3. random / class-aware / size-aware calibration subset 비교
+4. stage별 quantization sensitivity 측정
+5. 민감한 구간의 FP16 fallback
+6. AP-latency Pareto frontier 구성
+
+## 7. 재현
+
+### INT8 accuracy baseline
 
 ```bat
-py -3.11 tools\run_precision_experiments.py --stage fp16 --scope smoke
-py -3.11 tools\run_precision_experiments.py --stage fp16 --scope full --resume
+py -3.11 tools\run_precision_experiments.py --stage int8 --scope full ^
+  --calibration-images-dir input\coco\images\val2017 ^
+  --calibration-annotation-path input\coco\annotations\instances_val2017.json ^
+  --calibration-count 256 ^
+  --calibration-seed 0 ^
+  --calibration-method entropy ^
+  --output-dir precision-experiment-results\int8_val256_entropy ^
+  --resume
 ```
 
-INT8 explicit-Q/DQ tooling is implemented, but no INT8 values are recorded here until calibration, engine inspection, COCO accuracy, and the same latency protocol complete successfully on the target GPU.
+### 동일 실행 latency benchmark
+
+```bat
+python -m examples.yolo_benchmark.benchmark_precision ^
+  --mode both ^
+  --engine fp32=examples\yolo_tensorrt\artifacts\yolov8n_fp32_strict.engine ^
+  --engine fp16=examples\yolo_tensorrt\artifacts\yolov8n_mixed_fp16.engine ^
+  --engine int8=examples\yolo_tensorrt\artifacts\yolov8n_int8.engine ^
+  --images-dir input\coco\images\val2017 ^
+  --annotation-path input\coco\annotations\instances_val2017.json ^
+  --limit 5000 ^
+  --engine-warmup 50 ^
+  --engine-iterations 500 ^
+  --engine-rounds 4 ^
+  --pipeline-rounds 4 ^
+  --discard-rounds 1 ^
+  --conf-threshold 0.25 ^
+  --iou-threshold 0.45 ^
+  --output-json precision-experiment-results\timing_fp32_fp16_int8\benchmark_full.json ^
+  --output-csv precision-experiment-results\timing_fp32_fp16_int8\benchmark_full.csv
+```
