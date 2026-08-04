@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "experiment": "YOLOv8n INT8 TensorRT builder parameter sweep",
+  "environment": {
+    "gpu": "NVIDIA GeForce RTX 3060 Laptop GPU",
+    "tensorrt": "11.1.0.106",
+    "cuda": "12.6",
+    "driver": "561.09",
+    "batch_size": 1,
+    "input_shape": [1, 3, 640, 640],
+    "source_onnx_sha256": "0131ba64009833601fdf277dfe357d766311cde9ac99ec3212aff84445a8800a"
+  },
+  "stage_protocols": {
+    "baseline_full": {"warmup": 50, "iterations_per_round": 500, "rounds": 4, "discard_rounds": 1, "engine_count": 11},
+    "extended_full": {"warmup": 50, "iterations_per_round": 500, "rounds": 4, "discard_rounds": 1, "engine_count": 13},
+    "all_full_screening": {"warmup": 50, "iterations_per_round": 500, "rounds": 4, "discard_rounds": 1, "engine_count": 24},
+    "final_balanced": {"warmup": 50, "iterations_per_round": 500, "rounds": 7, "discard_rounds": 1, "retained_rounds": 6, "samples_per_engine": 3000, "engine_count": 6}
+  },
+  "final_balanced": {
+    "aux1": {
+      "engine_sha256": "9b64ffe82275b5b394a30eed5fb9ee0807d22c887d69679fc6940583752a9e2b",
+      "builder": {"builder_optimization_level": 5, "avg_timing_iterations": 8, "max_num_tactics": -1, "workspace_bytes": 2147483648, "max_aux_streams": 1, "build_time_seconds": 354.9395507000154},
+      "median": {"h2d_ms": 0.7837759852409363, "gpu_compute_ms": 1.3623520135879517, "d2h_ms": 0.2823359966278076, "gpu_total_ms": 2.4463039487600327, "host_latency_ms": 4.829749988857657, "throughput_fps": 207.05005485049924},
+      "p95": {"gpu_compute_ms": 2.0245823502540587, "gpu_total_ms": 3.1801871404051787, "host_latency_ms": 5.950115021551028}
+    },
+    "tactics32": {
+      "engine_sha256": "97c7d5c0de438dced8a96339427dfb3aaacd105c03a9dd206c95f6f42c0b352d",
+      "builder": {"builder_optimization_level": 5, "avg_timing_iterations": 8, "max_num_tactics": 32, "workspace_bytes": 2147483648, "max_aux_streams": 0, "build_time_seconds": 305.21506219997536},
+      "median": {"h2d_ms": 0.7515519857406616, "gpu_compute_ms": 1.411296010017395, "d2h_ms": 0.2787040024995804, "gpu_total_ms": 2.4878080040216446, "host_latency_ms": 4.886850016191602, "throughput_fps": 204.6307942316916},
+      "p95": {"gpu_compute_ms": 2.1417617082595823, "gpu_total_ms": 3.2555808976292613, "host_latency_ms": 6.202239962294699}
+    },
+    "opt2": {
+      "engine_sha256": "b7e57146f84dad10d57dd13254e2fe9d771ffd0f1d8b2cb9f6598cf79849145b",
+      "builder": {"builder_optimization_level": 2, "avg_timing_iterations": 8, "max_num_tactics": -1, "workspace_bytes": 2147483648, "max_aux_streams": 0, "build_time_seconds": 43.17208379996009},
+      "median": {"h2d_ms": 0.7636959850788116, "gpu_compute_ms": 1.417680025100708, "d2h_ms": 0.2672320008277893, "gpu_total_ms": 2.4780799746513367, "host_latency_ms": 4.881949978880584, "throughput_fps": 204.83618334258938},
+      "p95": {"gpu_compute_ms": 1.9734928488731387, "gpu_total_ms": 3.137036823481322, "host_latency_ms": 6.560715008527041}
+    },
+    "tactics8": {
+      "engine_sha256": "00363d6a69c64b298e4b69cdbf0c2d83cbfbdc0a35c5dbc46d00f09a7216c9fa",
+      "builder": {"builder_optimization_level": 5, "avg_timing_iterations": 8, "max_num_tactics": 8, "workspace_bytes": 2147483648, "max_aux_streams": 0, "build_time_seconds": 298.7519357999554},
+      "median": {"h2d_ms": 0.7590720057487488, "gpu_compute_ms": 1.42331200838089, "d2h_ms": 0.2833920121192932, "gpu_total_ms": 2.485615998506546, "host_latency_ms": 4.853549995459616, "throughput_fps": 206.03475827824116},
+      "p95": {"gpu_compute_ms": 2.0934415221214295, "gpu_total_ms": 3.2132240474224094, "host_latency_ms": 5.984525050735102}
+    },
+    "opt1": {
+      "engine_sha256": "5dc94996a0445582c31d8be841fd60b0c65c0ed7a1c1cceb828a2ddfb0eaefdc",
+      "builder": {"builder_optimization_level": 1, "avg_timing_iterations": 8, "max_num_tactics": -1, "workspace_bytes": 2147483648, "max_aux_streams": 0, "build_time_seconds": 42.76130470004864},
+      "median": {"h2d_ms": 0.7653919756412506, "gpu_compute_ms": 1.436735987663269, "d2h_ms": 0.26472000777721405, "gpu_total_ms": 2.484399989247322, "host_latency_ms": 4.903699969872832, "throughput_fps": 203.92764806314563},
+      "p95": {"gpu_compute_ms": 2.0555376529693605, "gpu_total_ms": 3.255812713503839, "host_latency_ms": 6.522004952421413}
+    },
+    "reference": {
+      "engine_sha256": "f52d0c36997bb6d3d1f15ac1387c3ded1b6f0c720de4252b591661b206b30517",
+      "builder": {"builder_optimization_level": 5, "avg_timing_iterations": 8, "max_num_tactics": -1, "workspace_bytes": 2147483648, "max_aux_streams": 0, "build_time_seconds": 357.3531734999269},
+      "median": {"h2d_ms": 0.7633120119571686, "gpu_compute_ms": 1.5435359477996826, "d2h_ms": 0.27212800085544586, "gpu_total_ms": 2.610320046544075, "host_latency_ms": 5.0762000028043985, "throughput_fps": 196.99775411676842},
+      "p95": {"gpu_compute_ms": 2.275063967704773, "gpu_total_ms": 3.451670429110527, "host_latency_ms": 6.605955009581522}
+    }
+  },
+  "final_selection": {
+    "label": "aux1",
+    "compute_ranking": ["aux1", "tactics32", "opt2", "tactics8", "opt1", "reference"],
+    "reference_percent_change": {"gpu_compute_median_ms": -11.738238715464286, "gpu_total_median_ms": -6.283371190486429, "host_latency_median_ms": -4.855009924955439, "throughput_median_fps": 5.102748901275503},
+    "limitations": ["Hardware and software stack specific.", "Engine-only batch-1 latency; preprocessing and postprocessing are excluded.", "Rebuilds may select different tactics and must be re-benchmarked."]
+  }
+}
