@@ -191,6 +191,7 @@ py -3.11 -m examples.yolo_tensorrt.run_builder_sweep ^
   --onnx-path examples\yolo_int8\artifacts\yolov8n_int8_qdq.onnx ^
   --model-precision int8 ^
   --output-dir precision-experiment-results\builder_sweep_int8 ^
+  --suite all ^
   --profile smoke
 ```
 
@@ -201,9 +202,17 @@ py -3.11 -m examples.yolo_tensorrt.run_builder_sweep ^
   --onnx-path examples\yolo_int8\artifacts\yolov8n_int8_qdq.onnx ^
   --model-precision int8 ^
   --output-dir precision-experiment-results\builder_sweep_int8 ^
+  --suite all ^
   --profile full ^
   --force
 ```
+
+`--suite baseline`은 기존 11개 설정을 이름과 순서를 변경하지 않고 실행합니다. `--suite extended`는
+13개의 추가 단일-parameter 및 interaction 설정만 실행하고, `--suite all`은 기존 11개 설정 뒤에
+추가 13개 설정을 deterministic order로 실행합니다. 옵션을 생략하면 이전 동작과 동일하게
+`baseline`을 사용합니다. 각 설정의 engine, metadata, inspector JSON, stdout/stderr log는 고유한
+label을 사용합니다. 개별 build가 실패하면 manifest와 summary JSON의 `failed_configurations`에
+기록하고 다음 설정을 계속 build하며, 성공한 engine은 모두 benchmark합니다.
 
 Builder optimization level은 tactic 검색 공간을 바꾸고, `max-num-tactics`는 timing할 후보 tactic 수를 제한합니다. `avg-timing-iterations`는 각 후보의 timing을 반복하여 선택 노이즈를 줄입니다. 이 설정들은 engine construction만 변경하며 calibration scale이나 Q/DQ 배치를 변경하지 않습니다. Smoke 결과는 실행 가능성을 확인하기 위한 validation일 뿐입니다. 최종 결론에는 engine 순서를 round마다 회전하는 full benchmark 결과를 사용해야 합니다.
 
