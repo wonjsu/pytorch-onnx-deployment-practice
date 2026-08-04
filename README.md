@@ -182,6 +182,31 @@ FP16은 정확도 저하 없이 현재 INT8 baseline과 같거나 더 나은 iso
 4. AP와 latency의 Pareto 비교
 5. 이후 CUDA preprocessing 및 GPU postprocessing 검토
 
+## TensorRT builder sweep
+
+현재 INT8 Q/DQ ONNX를 빠르게 검증하는 smoke sweep은 Windows CMD에서 다음과 같이 실행합니다.
+
+```bat
+py -3.11 -m examples.yolo_tensorrt.run_builder_sweep ^
+  --onnx-path examples\yolo_int8\artifacts\yolov8n_int8_qdq.onnx ^
+  --model-precision int8 ^
+  --output-dir precision-experiment-results\builder_sweep_int8 ^
+  --profile smoke
+```
+
+최종 비교에는 전체 rotating benchmark를 실행합니다.
+
+```bat
+py -3.11 -m examples.yolo_tensorrt.run_builder_sweep ^
+  --onnx-path examples\yolo_int8\artifacts\yolov8n_int8_qdq.onnx ^
+  --model-precision int8 ^
+  --output-dir precision-experiment-results\builder_sweep_int8 ^
+  --profile full ^
+  --force
+```
+
+Builder optimization level은 tactic 검색 공간을 바꾸고, `max-num-tactics`는 timing할 후보 tactic 수를 제한합니다. `avg-timing-iterations`는 각 후보의 timing을 반복하여 선택 노이즈를 줄입니다. 이 설정들은 engine construction만 변경하며 calibration scale이나 Q/DQ 배치를 변경하지 않습니다. Smoke 결과는 실행 가능성을 확인하기 위한 validation일 뿐입니다. 최종 결론에는 engine 순서를 round마다 회전하는 full benchmark 결과를 사용해야 합니다.
+
 ## Legacy ONNX example
 
 `examples/resnet18_onnx`는 PyTorch와 ONNX Runtime의 기본 output consistency 및 inference-only/end-to-end 측정을 익히기 위해 만든 초기 예제입니다. 저장소에는 남겨 두지만, 현재 프로젝트의 중심은 YOLOv8n TensorRT precision 최적화와 pipeline bottleneck 분석입니다.
