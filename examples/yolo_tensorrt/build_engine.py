@@ -22,6 +22,36 @@ def positive_workspace_gb(value: str) -> float:
     return workspace
 
 
+def optimization_level(value: str) -> int:
+    level = int(value)
+    if not 0 <= level <= 5:
+        raise argparse.ArgumentTypeError("builder optimization level must be between 0 and 5")
+    return level
+
+
+def positive_integer(value: str) -> int:
+    number = int(value)
+    if number <= 0:
+        raise argparse.ArgumentTypeError("value must be a positive integer")
+    return number
+
+
+def max_num_tactics(value: str) -> int:
+    number = int(value)
+    if number == 0 or number < -1:
+        raise argparse.ArgumentTypeError("max-num-tactics must be -1 or a positive integer")
+    return number
+
+
+def max_aux_streams(value: str) -> int | str:
+    if value.lower() == "auto":
+        return "auto"
+    number = int(value)
+    if number < 0:
+        raise argparse.ArgumentTypeError("max-aux-streams must be auto or a non-negative integer")
+    return number
+
+
 def existing_onnx_path(value: str) -> Path:
     path = Path(value)
     if not path.is_file():
@@ -43,6 +73,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--onnx-path", type=existing_onnx_path, required=True)
     parser.add_argument("--engine-path", type=writable_engine_path, required=True)
     parser.add_argument("--workspace-gb", type=positive_workspace_gb, default=1.0)
+    parser.add_argument("--builder-optimization-level", type=optimization_level, default=3)
+    parser.add_argument("--avg-timing-iterations", type=positive_integer, default=4)
+    parser.add_argument("--max-num-tactics", type=max_num_tactics, default=-1)
+    parser.add_argument("--max-aux-streams", type=max_aux_streams, default="auto")
     parser.add_argument("--tf32", choices=("off", "on"), default="off")
     parser.add_argument("--model-precision", choices=("fp32", "mixed-fp16", "int8"), default="fp32",
                         help="Metadata/ONNX validation label; this does not set a TensorRT precision flag")
@@ -101,6 +135,15 @@ def main() -> None:
     for index in range(network.num_inputs):
         _shape(network.get_input(index).shape, network.get_input(index).name)
     config = builder.create_builder_config()
+    expected_properties = ("builder_optimization_level", "avg_timing_iterations", "max_num_tactics", "max_aux_streams")
+    missing = [name for name in expected_properties if not hasattr(config, name)]
+    if missing:
+        raise RuntimeError("TensorRT builder config is missing required API properties: " + ", ".join(missing))
+    config.builder_optimization_level = args.builder_optimization_level
+    config.avg_timing_iterations = args.avg_timing_iterations
+    config.max_num_tactics = args.max_num_tactics
+    if args.max_aux_streams != "auto":
+        config.max_aux_streams = args.max_aux_streams
     config.profiling_verbosity = trt.ProfilingVerbosity.DETAILED
     workspace_bytes = int(args.workspace_gb * 2**30)
     config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, workspace_bytes)
@@ -182,6 +225,11 @@ def main() -> None:
         "engine_path": _relative_or_name(args.engine_path),
         "tf32_enabled": tf32_enabled,
         "workspace_bytes": workspace_bytes,
+        "builder_optimization_level": args.builder_optimization_level,
+        "avg_timing_iterations": args.avg_timing_iterations,
+        "max_num_tactics": args.max_num_tactics,
+        "max_aux_streams": None if args.max_aux_streams == "auto" else args.max_aux_streams,
+        "max_aux_streams_mode": "auto" if args.max_aux_streams == "auto" else "explicit",
         "build_timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "build_time_seconds": build_seconds,
         "io_tensors": io_metadata,
@@ -193,6 +241,10 @@ def main() -> None:
     print(f"engine_file_size: {len(engine_bytes)} bytes")
     print(f"TF32: {'enabled' if tf32_enabled else 'disabled'}")
     print(f"workspace: {workspace_bytes} bytes")
+    print(f"builder_optimization_level: {args.builder_optimization_level}")
+    print(f"avg_timing_iterations: {args.avg_timing_iterations}")
+    print(f"max_num_tactics: {args.max_num_tactics}")
+    print(f"max_aux_streams: {args.max_aux_streams}")
     print(f"engine_build_time: {build_seconds:.3f} s")
     for item in io_metadata:
         print(f"I/O: name={item['name']} mode={item['mode']} shape={tuple(item['shape'])} dtype={item['dtype']}")

@@ -76,3 +76,52 @@ def test_engine_path_and_static_metadata_validation(tmp_path) -> None:
     empty.touch()
     with pytest.raises(ValueError, match="empty"):
         validate_engine_path(empty)
+
+
+def test_builder_parameter_converters() -> None:
+    import argparse
+    import pytest
+    from examples.yolo_tensorrt.build_engine import max_aux_streams, max_num_tactics, optimization_level, positive_integer
+
+    assert [optimization_level(str(value)) for value in (0, 5)] == [0, 5]
+    assert positive_integer("4") == 4
+    assert [max_num_tactics(str(value)) for value in (-1, 1, 32)] == [-1, 1, 32]
+    assert [max_aux_streams(value) for value in ("auto", "0", "2")] == ["auto", 0, 2]
+    for converter, value in ((optimization_level, "6"), (positive_integer, "0"),
+                             (max_num_tactics, "0"), (max_num_tactics, "-2"),
+                             (max_aux_streams, "-1")):
+        with pytest.raises((argparse.ArgumentTypeError, ValueError)):
+            converter(value)
+
+
+def test_sweep_configurations_paths_and_resume_metadata(tmp_path) -> None:
+    from examples.yolo_tensorrt.run_builder_sweep import engine_path, metadata_matches, predefined_configurations
+
+    first = predefined_configurations(3.0); second = predefined_configurations(3.0)
+    assert first == second and first is not second
+    assert next(item for item in first if item["label"] == "workspace1")["workspace_gb"] == 1.0
+    paths = [engine_path(tmp_path, item["label"], "int8") for item in first]
+    assert len(paths) == len(set(paths))
+    settings = first[0]
+    metadata = {"onnx_sha256": "abc", "workspace_bytes": int(3.0 * 2**30),
+                **{key: settings[key] for key in ("builder_optimization_level", "avg_timing_iterations",
+                                                   "max_num_tactics", "max_aux_streams", "max_aux_streams_mode")}}
+    assert metadata_matches(metadata, "abc", settings)
+    assert not metadata_matches({**metadata, "max_num_tactics": 8}, "abc", settings)
+
+
+def test_sweep_summary_percent_changes_and_sorting() -> None:
+    import pytest
+    from examples.yolo_tensorrt.run_builder_sweep import create_summary
+
+    configs = [{"label": "reference"}, {"label": "faster"}]
+    fields = ("h2d_ms", "gpu_compute_ms", "d2h_ms", "gpu_total_ms", "host_latency_ms", "throughput_fps")
+    def result(value):
+        return {field: {"all_iterations": {"mean": value, "median": value, "p95": value}} for field in fields}
+    benchmark = {"results": {"engine": {"reference": {"aggregate": result(10.0)},
+                                           "faster": {"aggregate": result(8.0)}}}}
+    builds = {label: {"engine_build_time_seconds": 1, "engine_file_size_bytes": 2} for label in ("reference", "faster")}
+    summary = create_summary(configs, builds, benchmark)
+    assert summary["winner_label"] == "faster"
+    assert [row["label"] for row in summary["configurations"]] == ["faster", "reference"]
+    assert summary["configurations"][0]["percent_difference_from_reference"]["compute_median_ms"] == pytest.approx(-20)
