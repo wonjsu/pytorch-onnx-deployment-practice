@@ -188,3 +188,26 @@ python -m examples.yolo_benchmark.benchmark_precision ^
   --output-json precision-experiment-results\timing_fp32_fp16_int8\benchmark_full.json ^
   --output-csv precision-experiment-results\timing_fp32_fp16_int8\benchmark_full.csv
 ```
+
+## YOLOv8n INT8 calibration matrix
+
+`examples/yolo_int8/run_calibration_matrix.py` runs an explicit-Q/DQ post-training INT8 matrix for YOLOv8n. It generates one deterministic master calibration set for the largest requested count and reuses prefixes for smaller configurations, so with seed `0` the 128-image set is the first 128 images of the 256 set, the 256-image set is the first 256 images of the 512 set, and the 512-image set is the first 512 images of the 1024 set. The `entropy_256` row is retained as the historical comparison baseline, not necessarily the winner.
+
+Windows CMD example:
+
+```cmd
+python -m examples.yolo_int8.run_calibration_matrix ^
+  --scope full ^
+  --methods entropy max ^
+  --counts 128 256 512 1024 ^
+  --seed 0 ^
+  --onnx-path examples\yolo_onnx\artifacts\yolov8n.onnx ^
+  --calibration-images-dir input\coco\images\train2017 ^
+  --calibration-annotation-path input\coco\annotations\instances_train2017.json ^
+  --eval-images-dir input\coco\images\val2017 ^
+  --eval-annotation-path input\coco\annotations\instances_val2017.json ^
+  --output-dir precision-experiment-results\calibration_matrix_int8 ^
+  --resume
+```
+
+The calibration image and annotation paths are required intentionally; the runner does not silently assume `train2017` exists. Use `--force` instead of `--resume` to delete and recreate only the selected output directory.
