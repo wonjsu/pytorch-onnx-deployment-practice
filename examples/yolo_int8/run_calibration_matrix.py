@@ -102,19 +102,41 @@ def is_nested(master: Sequence[dict[str, Any]], counts: Sequence[int]) -> bool:
                for smaller, larger in zip(ordered, ordered[1:]))
 
 
-def command_to_module(module: str, *args: str) -> list[str]:
-    return [sys.executable, "-m", module, *args]
+def command_to_module(python: Path | str, module: str, *args: str) -> list[str]:
+    return [str(python), "-m", module, *args]
 
 
-def build_quantize_command(source: Path, output: Path, calibration_dir: Path, method: str) -> list[str]:
-    return command_to_module("examples.yolo_int8.quantize_int8_modelopt", "--onnx-path", str(source),
+def default_modelopt_python(root: Path = ROOT, platform: str = sys.platform) -> Path:
+    if platform.startswith("win"):
+        return root / ".venv-modelopt" / "Scripts" / "python.exe"
+    posix = root / ".venv-modelopt" / "bin" / "python"
+    return posix if posix.exists() else Path(sys.executable)
+
+
+def validate_python_interpreter(path: Path, role: str) -> None:
+    if not path.is_file():
+        raise FileNotFoundError(f"{role} Python interpreter does not exist: {path}")
+
+
+def query_modelopt_version(modelopt_python: Path) -> str:
+    cmd = [str(modelopt_python), "-c", "import modelopt; print(getattr(modelopt, '__version__', 'unknown'))"]
+    completed = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if completed.returncode:
+        detail = (completed.stderr or completed.stdout).strip()
+        suffix = f": {detail}" if detail else ""
+        raise RuntimeError(f"failed to query ModelOpt version with {modelopt_python}{suffix}")
+    return completed.stdout.strip() or "unknown"
+
+
+def build_quantize_command(source: Path, output: Path, calibration_dir: Path, method: str, modelopt_python: Path | str) -> list[str]:
+    return command_to_module(modelopt_python, "examples.yolo_int8.quantize_int8_modelopt", "--onnx-path", str(source),
                              "--output-path", str(output), "--calibration-data-dir", str(calibration_dir),
                              "--calibration-method", method)
 
 
-def build_engine_command(onnx_path: Path, engine_path: Path) -> list[str]:
+def build_engine_command(onnx_path: Path, engine_path: Path, runtime_python: Path | str) -> list[str]:
     s = BUILDER_SETTINGS
-    return command_to_module("examples.yolo_tensorrt.build_engine", "--onnx-path", str(onnx_path),
+    return command_to_module(runtime_python, "examples.yolo_tensorrt.build_engine", "--onnx-path", str(onnx_path),
                              "--engine-path", str(engine_path), "--model-precision", s["model_precision"],
                              "--tf32", s["tf32"], "--workspace-gb", str(s["workspace_gb"]),
                              "--builder-optimization-level", str(s["builder_optimization_level"]),
@@ -124,8 +146,8 @@ def build_engine_command(onnx_path: Path, engine_path: Path) -> list[str]:
 
 
 def build_accuracy_command(engine: Path, images_dir: Path, annotation_path: Path, predictions: Path,
-                           metrics: Path, limit: int | None) -> list[str]:
-    cmd = command_to_module("examples.yolo_coco.evaluate_coco", "--backend", "tensorrt", "--engine-path", str(engine),
+                           metrics: Path, limit: int | None, runtime_python: Path | str) -> list[str]:
+    cmd = command_to_module(runtime_python, "examples.yolo_coco.evaluate_coco", "--backend", "tensorrt", "--engine-path", str(engine),
                             "--images-dir", str(images_dir), "--annotation-path", str(annotation_path),
                             "--conf-threshold", "0.001", "--iou-threshold", "0.7", "--output-json", str(predictions),
                             "--metrics-json", str(metrics))
@@ -134,9 +156,10 @@ def build_accuracy_command(engine: Path, images_dir: Path, annotation_path: Path
     return cmd
 
 
-def build_benchmark_command(engines: Sequence[tuple[str, Path]], output_json: Path, output_csv: Path, scope: str) -> list[str]:
+def build_benchmark_command(engines: Sequence[tuple[str, Path]], output_json: Path, output_csv: Path, scope: str,
+                            runtime_python: Path | str) -> list[str]:
     warmup, iterations, rounds = (50, 500, 9) if scope == "full" else (10, 100, 3)
-    cmd = command_to_module("examples.yolo_benchmark.benchmark_precision", "--mode", "engine",
+    cmd = command_to_module(runtime_python, "examples.yolo_benchmark.benchmark_precision", "--mode", "engine",
                             "--engine-warmup", str(warmup), "--engine-iterations", str(iterations),
                             "--engine-rounds", str(rounds), "--discard-rounds", "1",
                             "--output-json", str(output_json), "--output-csv", str(output_csv))
@@ -210,6 +233,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     p.add_argument("--seed", type=int, default=DEFAULT_SEED)
     p.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     p.add_argument("--onnx-path", type=Path, default=DEFAULT_ONNX_PATH)
+    p.add_argument("--runtime-python", type=Path, default=Path(sys.executable))
+    p.add_argument("--modelopt-python", type=Path, default=default_modelopt_python())
     p.add_argument("--calibration-images-dir", type=Path, required=True)
     p.add_argument("--calibration-annotation-path", type=Path, required=True)
     p.add_argument("--eval-images-dir", type=Path, required=True)
@@ -222,6 +247,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 def main(argv: Sequence[str] | None = None) -> dict[str, Any]:
     args = parse_args(argv)
+    validate_python_interpreter(args.runtime_python, "runtime")
+    validate_python_interpreter(args.modelopt_python, "ModelOpt")
+    modelopt_version = query_modelopt_version(args.modelopt_python)
     if args.force and args.output_dir.exists(): shutil.rmtree(args.output_dir)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     max_count = max(args.counts)
@@ -253,15 +281,15 @@ def main(argv: Sequence[str] | None = None) -> dict[str, Any]:
             write_json(cdir / "calibration" / "metadata.json", {**expected, "reference_directory": str(master_dir), "prefix_count": config.count})
             onnx_out = cdir / "yolov8n_int8_qdq.onnx"; engine = cdir / "yolov8n_int8.engine"
             qmeta = Path(str(onnx_out) + ".conversion.json")
-            if not args.resume or not metadata_matches(qmeta, {"source_sha256": source_sha, "calibration_method": config.method, "calibration_count": config.count, "calibration_seed": config.seed, "calibration_image_ids": ids}):
-                row["quantization_duration"] = run_command(build_quantize_command(args.onnx_path, onnx_out, cdir / "calibration", config.method), logs / "quantize.log")
+            if not args.resume or not metadata_matches(qmeta, {"source_sha256": source_sha, "calibration_method": config.method, "calibration_count": config.count, "calibration_seed": config.seed, "calibration_image_ids": ids, "modelopt_version": modelopt_version}):
+                row["quantization_duration"] = run_command(build_quantize_command(args.onnx_path, onnx_out, cdir / "calibration", config.method, args.modelopt_python), logs / "quantize.log")
             emeta = Path(str(engine) + ".json")
             if not args.resume or not metadata_matches(emeta, expected_builder_metadata(sha256(onnx_out))):
-                row["engine_build_duration"] = run_command(build_engine_command(onnx_out, engine), logs / "build_engine.log")
+                row["engine_build_duration"] = run_command(build_engine_command(onnx_out, engine, args.runtime_python), logs / "build_engine.log")
             row["ONNX SHA-256"] = sha256(onnx_out); row["engine SHA-256"] = sha256(engine)
             success_engines.append((config.label, engine))
             accuracy_path = cdir / "accuracy.json"
-            run_command(build_accuracy_command(engine, args.eval_images_dir, args.eval_annotation_path, cdir / "predictions.json", accuracy_path, eval_limit), logs / "accuracy.log")
+            run_command(build_accuracy_command(engine, args.eval_images_dir, args.eval_annotation_path, cdir / "predictions.json", accuracy_path, eval_limit, args.runtime_python), logs / "accuracy.log")
             if accuracy_path.is_file():
                 accuracy = json.loads(accuracy_path.read_text(encoding="utf-8"))
                 accuracy.update({"calibration_method": config.method, "calibration_count": config.count,
@@ -272,7 +300,7 @@ def main(argv: Sequence[str] | None = None) -> dict[str, Any]:
         rows.append(row); manifest["configurations"].append(row); write_json(args.output_dir / "matrix_manifest.json", manifest); summarize(rows, args.output_dir)
     if success_engines:
         try:
-            run_command(build_benchmark_command(success_engines, args.output_dir / "benchmark.json", args.output_dir / "benchmark.csv", args.scope), args.output_dir / "benchmark.log")
+            run_command(build_benchmark_command(success_engines, args.output_dir / "benchmark.json", args.output_dir / "benchmark.csv", args.scope, args.runtime_python), args.output_dir / "benchmark.log")
             apply_benchmark_results(rows, args.output_dir / "benchmark.json")
         except Exception as exc:
             manifest["benchmark_error"] = str(exc)

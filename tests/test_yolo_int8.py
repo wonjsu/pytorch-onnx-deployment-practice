@@ -39,6 +39,7 @@ def test_int8_never_silently_defaults_calibration_paths():
 
 from examples.yolo_int8.run_calibration_matrix import (
     BUILDER_SETTINGS,
+    build_accuracy_command,
     build_benchmark_command,
     build_engine_command,
     build_quantize_command,
@@ -46,7 +47,10 @@ from examples.yolo_int8.run_calibration_matrix import (
     is_nested,
     labels_are_unique,
     matrix_configurations,
+    default_modelopt_python,
     metadata_matches,
+    query_modelopt_version,
+    validate_python_interpreter,
     select_master_images,
     subset_ids,
 )
@@ -73,10 +77,12 @@ def test_matrix_configuration_ordering_labels_and_paths():
 
 
 def test_matrix_command_construction_uses_explicit_qdq_and_final_builder_settings(tmp_path: Path):
-    quant = build_quantize_command(tmp_path / "fp32.onnx", tmp_path / "out.onnx", tmp_path / "cal", "entropy")
+    quant = build_quantize_command(tmp_path / "fp32.onnx", tmp_path / "out.onnx", tmp_path / "cal", "entropy", tmp_path / "modelopt-python")
     assert "examples.yolo_int8.quantize_int8_modelopt" in quant
     assert "--calibration-method" in quant and "entropy" in quant
-    engine = build_engine_command(tmp_path / "out.onnx", tmp_path / "out.engine")
+    assert quant[0] == str(tmp_path / "modelopt-python")
+    engine = build_engine_command(tmp_path / "out.onnx", tmp_path / "out.engine", tmp_path / "runtime-python")
+    assert engine[0] == str(tmp_path / "runtime-python")
     for flag, value in {
         "--model-precision": "int8", "--tf32": "off", "--workspace-gb": "2",
         "--builder-optimization-level": "5", "--avg-timing-iterations": "8",
@@ -108,9 +114,64 @@ def test_failure_continuation_pattern(tmp_path: Path, monkeypatch: pytest.Monkey
 
 def test_eight_engine_full_benchmark_uses_nine_rounds_and_discards_one(tmp_path: Path):
     engines = [(f"e{i}", tmp_path / f"e{i}.engine") for i in range(8)]
-    cmd = build_benchmark_command(engines, tmp_path / "benchmark.json", tmp_path / "benchmark.csv", "full")
+    cmd = build_benchmark_command(engines, tmp_path / "benchmark.json", tmp_path / "benchmark.csv", "full", tmp_path / "runtime-python")
+    assert cmd[0] == str(tmp_path / "runtime-python")
     assert cmd[cmd.index("--engine-rounds") + 1] == "9"
     assert cmd[cmd.index("--discard-rounds") + 1] == "1"
     assert cmd[cmd.index("--engine-warmup") + 1] == "50"
     assert cmd[cmd.index("--engine-iterations") + 1] == "500"
     assert cmd.count("--engine") == 8
+
+
+def test_matrix_command_routing_uses_separate_interpreters(tmp_path: Path):
+    runtime_python = tmp_path / "runtime-python"
+    modelopt_python = tmp_path / "modelopt-python"
+    assert build_quantize_command(tmp_path / "fp32.onnx", tmp_path / "out.onnx", tmp_path / "cal", "max", modelopt_python)[0] == str(modelopt_python)
+    assert build_engine_command(tmp_path / "out.onnx", tmp_path / "out.engine", runtime_python)[0] == str(runtime_python)
+    assert build_accuracy_command(tmp_path / "out.engine", tmp_path / "images", tmp_path / "ann.json", tmp_path / "pred.json", tmp_path / "metrics.json", None, runtime_python)[0] == str(runtime_python)
+    assert build_benchmark_command([("int8", tmp_path / "out.engine")], tmp_path / "bench.json", tmp_path / "bench.csv", "smoke", runtime_python)[0] == str(runtime_python)
+
+
+def test_matrix_default_modelopt_python_paths(tmp_path: Path):
+    assert default_modelopt_python(tmp_path, "win32") == tmp_path / ".venv-modelopt" / "Scripts" / "python.exe"
+    posix_python = tmp_path / ".venv-modelopt" / "bin" / "python"
+    assert default_modelopt_python(tmp_path, "linux") != posix_python
+    posix_python.parent.mkdir(parents=True)
+    posix_python.write_text("#!python")
+    assert default_modelopt_python(tmp_path, "linux") == posix_python
+
+
+def test_matrix_missing_interpreter_validation_error(tmp_path: Path):
+    with pytest.raises(FileNotFoundError, match="runtime Python interpreter does not exist"):
+        validate_python_interpreter(tmp_path / "missing-python", "runtime")
+
+
+def test_matrix_resume_rejects_different_modelopt_version(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    metadata = tmp_path / "model.onnx.conversion.json"
+    metadata.write_text(json.dumps({
+        "source_sha256": "abc",
+        "calibration_method": "entropy",
+        "calibration_count": 128,
+        "calibration_seed": 0,
+        "calibration_image_ids": [1, 2],
+        "modelopt_version": "0.1",
+    }))
+    assert not metadata_matches(metadata, {
+        "source_sha256": "abc",
+        "calibration_method": "entropy",
+        "calibration_count": 128,
+        "calibration_seed": 0,
+        "calibration_image_ids": [1, 2],
+        "modelopt_version": "0.2",
+    })
+
+
+def test_matrix_modelopt_version_query_uses_selected_interpreter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    import subprocess
+    import examples.yolo_int8.run_calibration_matrix as matrix
+    selected = tmp_path / "modelopt-python"
+    def fake_run(cmd, capture_output, text, check):
+        assert cmd[0] == str(selected)
+        return subprocess.CompletedProcess(cmd, 0, stdout="1.2.3\n", stderr="")
+    monkeypatch.setattr(matrix.subprocess, "run", fake_run)
+    assert query_modelopt_version(selected) == "1.2.3"

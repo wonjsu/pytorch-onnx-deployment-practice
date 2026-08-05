@@ -196,12 +196,14 @@ python -m examples.yolo_benchmark.benchmark_precision ^
 Windows CMD example:
 
 ```cmd
-python -m examples.yolo_int8.run_calibration_matrix ^
+.venv\Scripts\python.exe -m examples.yolo_int8.run_calibration_matrix ^
   --scope full ^
   --methods entropy max ^
   --counts 128 256 512 1024 ^
   --seed 0 ^
   --onnx-path examples\yolo_onnx\artifacts\yolov8n.onnx ^
+  --runtime-python .venv\Scripts\python.exe ^
+  --modelopt-python .venv-modelopt\Scripts\python.exe ^
   --calibration-images-dir input\coco\images\train2017 ^
   --calibration-annotation-path input\coco\annotations\instances_train2017.json ^
   --eval-images-dir input\coco\images\val2017 ^
