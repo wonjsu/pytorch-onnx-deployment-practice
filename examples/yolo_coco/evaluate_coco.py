@@ -237,6 +237,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--conf-threshold", type=float, default=0.001)
     parser.add_argument("--iou-threshold", type=float, default=0.7)
     parser.add_argument("--output-json", type=Path, default=DEFAULT_OUTPUT_JSON)
+    parser.add_argument("--metrics-json", type=Path, help="Optional structured COCO metrics output")
     args = parser.parse_args()
     if args.limit is not None and args.limit <= 0:
         parser.error("--limit must be a positive integer")
@@ -355,6 +356,26 @@ def main() -> None:
     print(f"AP medium: {stats[4]:.4f}")
     print(f"AP large: {stats[5]:.4f}")
     print(f"AR (maxDets=100): {stats[8]:.4f}")
+    if args.metrics_json:
+        engine_sha = None
+        onnx_sha = None
+        if args.backend == "tensorrt" and args.engine_path.is_file():
+            import hashlib
+            engine_sha = hashlib.sha256(args.engine_path.read_bytes()).hexdigest()
+            metadata_path = Path(str(args.engine_path) + ".json")
+            if metadata_path.is_file():
+                try:
+                    onnx_sha = json.loads(metadata_path.read_text(encoding="utf-8")).get("source_onnx_sha256")
+                except json.JSONDecodeError:
+                    onnx_sha = None
+        payload = {
+            "AP50:95": float(stats[0]), "AP50": float(stats[1]), "AP75": float(stats[2]),
+            "AP_small": float(stats[3]), "AP_medium": float(stats[4]), "AP_large": float(stats[5]),
+            "AR100": float(stats[8]), "prediction_count": len(predictions),
+            "engine_sha256": engine_sha, "onnx_sha256": onnx_sha,
+        }
+        args.metrics_json.parent.mkdir(parents=True, exist_ok=True)
+        args.metrics_json.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
 if __name__ == "__main__":
