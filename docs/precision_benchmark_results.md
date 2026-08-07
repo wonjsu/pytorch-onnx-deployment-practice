@@ -213,3 +213,36 @@ Windows CMD example:
 ```
 
 The calibration image and annotation paths are required intentionally; the runner does not silently assume `train2017` exists. Use `--force` instead of `--resume` to delete and recreate only the selected output directory.
+
+## Stage 1 selective-FP16 sensitivity
+
+The next accuracy experiment uses the best current all-INT8 calibration configuration, `entropy_128` (128 images, seed 0), as its baseline. It restores one neutral ONNX block range to ModelOpt's `fp16` high-precision fallback at a time:
+
+- `blocks_00_04`: blocks 0, 1, 2, 3, and 4
+- `blocks_05_09`: blocks 5, 6, 7, 8, and 9
+- `blocks_10_15`: blocks 10, 11, 12, 13, 14, and 15
+- `blocks_16_21`: blocks 16, 17, 18, 19, 20, and 21
+- `block_22`: block 22
+
+These names intentionally avoid unverified semantic labels. Stage 1 measures **accuracy sensitivity only**, not final performance or a final deployment configuration. Hierarchical grouping keeps the initial experiment to five variants instead of immediately testing every ONNX node. After Stage 1, only the group with the greatest accuracy recovery will be subdivided for Stage 2. Final candidates will later receive a separate, balanced latency benchmark.
+
+Use `inspect_yolo_node_groups` first if the exported graph's node naming needs verification. The sensitivity runner resolves each block to exact source node names and passes anchored, escaped exclusion regexes to ModelOpt. The calibration directory is always supplied by the caller:
+
+```cmd
+.venv\Scripts\python.exe -m examples.yolo_int8.inspect_yolo_node_groups ^
+  examples\yolo_onnx\artifacts\yolov8n.onnx ^
+  --json-output precision-experiment-results\selective_fp16\node_groups.json
+
+.venv\Scripts\python.exe -m examples.yolo_int8.run_selective_fp16_sensitivity ^
+  --scope full ^
+  --onnx-path examples\yolo_onnx\artifacts\yolov8n.onnx ^
+  --calibration-data-dir YOUR_ENTROPY_128_CALIBRATION_DIRECTORY ^
+  --eval-images-dir input\coco\images\val2017 ^
+  --eval-annotation-path input\coco\annotations\instances_val2017.json ^
+  --runtime-python .venv\Scripts\python.exe ^
+  --modelopt-python .venv-modelopt\Scripts\python.exe ^
+  --output-dir precision-experiment-results\selective_fp16 ^
+  --resume
+```
+
+Use `--baseline-accuracy-json` to reference an existing `entropy_128` evaluation. Without it, the runner creates and evaluates the all-INT8 baseline before the five selective variants. `--scope smoke` evaluates a small correctness-only subset and marks its output as smoke; those values must not be presented as final accuracy.
