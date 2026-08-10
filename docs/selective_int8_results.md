@@ -149,9 +149,9 @@ Q/DQ node count나 Inspector datatype endpoint count는 FLOPs 비율과 동일�
 
 | Model | AP50:95 | Engine compute | GPU total | Engine host | Pipeline compute | Pipeline no-I/O | Pipeline E2E |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| **matched FP16** | **0.3674** | **1.628 ms** | **2.660 ms** | **5.854 ms** | **5.897 ms** | **15.556 ms** | **18.651 ms** |
-| Stage 5 `quantize_cv2_1` | 0.361018 | 1.685 ms | 2.784 ms | 6.089 ms | 6.034 ms | 15.770 ms | 18.861 ms |
-| Stage 3 `leave_other_int8` | 0.361695 | 1.734 ms | 2.856 ms | 6.128 ms | 6.223 ms | 15.864 ms | 18.963 ms |
+| **matched FP16** | **0.3674** | **1.628 ms** | **2.754 ms** | **5.854 ms** | **3.652 ms** | **15.556 ms** | **18.651 ms** |
+| Stage 5 `quantize_cv2_1` | 0.361018 | 1.685 ms | 2.883 ms | 6.089 ms | 3.737 ms | 15.770 ms | 18.861 ms |
+| Stage 3 `leave_other_int8` | 0.361695 | 1.734 ms | 2.958 ms | 6.128 ms | 3.854 ms | 15.864 ms | 18.963 ms |
 
 Stage 5는 Stage 3보다 약간 빨랐습니다.
 
